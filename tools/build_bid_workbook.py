@@ -169,11 +169,13 @@ flow = [
     ("2. LABOUR RATES", "Crew mix per trade (same layout as the original PRJ INFO rates block), shown beside Knowify actual rates and mix."),
     ("3. PLUMBING EST / HVAC EST", "One row per item: Qty x Material $/unit and Qty x Hrs/unit. Same columns on both sheets so HVAC ties back exactly like Plumbing."),
     ("4. SUBS & GC", "Subtrade quotes and general conditions. Allocate by % to each division, or leave % blank to auto-split by direct cost."),
-    ("5. BID SUMMARY", "Cost by type and division, then margin. COGS mix vs your Knowify job and vs your typical %. Holds every tie-out check."),
+    ("4b. CONTINGENCY", "2% general allowance on budgeted cost (adjustable) plus specific risk items. Added to cost before the grand total."),
+    ("5. BID SUMMARY", "Cost by type and division, then margin (self-perform and subs). Back-check vs company cost breakdown. Holds every tie-out check."),
     ("6. BUDGET", "Cost budget per division and phase. Phases match Knowify, so the field budget and the actuals line up."),
     ("7. SCHEDULE OF VALUES", "Contract split into Knowify-style lines (e.g. 'P - BLDG A - L1 Plumbing Rough-in (Labour)'), with the Knowify cost budget for each line."),
     ("8. KNOWIFY PHASES / TIME", "Paste the 'Actual vs Budget - Phases' and 'Time' sheets from a Knowify Job Summary export, cell A1, exactly as exported."),
     ("9. KNOWIFY REVIEW", "Reads the two paste tabs: margin after overhead, cost mix, actual crew rates and mix, and how each phase ran vs its budget."),
+    ("9b. RATE VARIANCE", "Template vs Knowify actual rates vs a saved snapshot, the effect on this bid, and overhead for reference."),
     ("10. AUDIT NOTES", "Formula problems found in the original template, decisions made, and open questions."),
 ]
 for k, v in flow:
@@ -222,7 +224,7 @@ for i, line in enumerate([
 # INPUTS
 # =====================================================================
 inp = wb.create_sheet("INPUTS")
-setw(inp, {"A": 3, "B": 42, "C": 24, "D": 16, "E": 16, "F": 14, "G": 44})
+setw(inp, {"A": 3, "B": 42, "C": 24, "D": 16, "E": 16, "F": 14, "G": 44, "J": 10, "K": 10})
 title(inp, "INPUTS", "Blue cells are inputs. Bright yellow = key assumption to review on every bid.")
 put(inp, "B3", "PROJECT INFORMATION", F_SUB)
 for row, lab, val in [
@@ -246,17 +248,32 @@ for row, lab, val, fmt, cmt in [
     (23, "PST on materials", 0.07, PCT, "BC PST 7%. From original PRJ INFO H52. Applied to material rows marked Y."),
     (24, "GST (shown on proposal only, not a cost)", 0.05, PCT, "From original PRJ INFO H51. GST is recoverable, so it is not in cost."),
     (25, "Consumables (% of material)", 0.02, PCT, "Original used 2% of material (P&H SUMMARY H46, HVAC SUMMARY D30)."),
-    (26, "Contingency (% of direct cost)", 0.0, PCT, "Optional risk allowance. Kept as its own line so it stays visible."),
+    (26, "Contingency allowance % (set on CONTINGENCY tab)", "=CONTINGENCY!$C$4", PCT, "Default 2% of budgeted cost. Change it on the CONTINGENCY tab."),
     (27, "Warranty reserve (% of fixture & equipment supply)", 0.02, PCT, "Original: 2 years x 1% of equipment+fixtures (PRJ SUMMARY rows 75-78)."),
     (28, "Contract rounding (round up to nearest $)", 100, CUR, "Original rounded each division up to the nearest $100."),
     (29, "Holdback (BC Builders Lien Act)", 0.10, PCT, "Used on the SOV for progress billing."),
 ]:
     put(inp, f"B{row}", lab)
-    put(inp, f"C{row}", val, F_IN, fmt=fmt, fill=FILL_KEY, border=BOX)
+    if isinstance(val, str):
+        put(inp, f"C{row}", val, F_LINK, fmt=fmt, border=BOX)
+    else:
+        put(inp, f"C{row}", val, F_IN, fmt=fmt, fill=FILL_KEY, border=BOX)
     put(inp, f"G{row}", cmt, F_NOTE)
 
 put(inp, "B31", "TARGET MARGIN BY DIVISION", F_SUB)
-header_row(inp, 32, ["Division", "Code", "Target Margin %", "Equivalent Markup %", "Crew"], start_col=2)
+header_row(inp, 32, ["Division", "Code", "Self-Perform Margin %", "Equivalent Markup %", "Crew", "Subs Margin %"], start_col=2)
+put(inp, "J31", "Margin list", F_NOTE)
+put(inp, "K31", "Subs list", F_NOTE)
+for i, m in enumerate(range(8, 21)):
+    put(inp, f"J{32 + i}", m / 100, F_NOTE, fmt="0%")
+for i, m in enumerate(range(10, 16)):
+    put(inp, f"K{32 + i}", m / 100, F_NOTE, fmt="0%")
+dv_m = DataValidation(type="list", formula1="INPUTS!$J$32:$J$44", allow_blank=False)
+dv_s = DataValidation(type="list", formula1="INPUTS!$K$32:$K$37", allow_blank=False)
+inp.add_data_validation(dv_m)
+inp.add_data_validation(dv_s)
+dv_m.add("D33:D36")
+dv_s.add("G33:G36")
 for i, (code, name) in enumerate(DIVS):
     row = 33 + i
     put(inp, f"B{row}", name, F_IN, fill=FILL_IN, border=BOX)
@@ -264,9 +281,11 @@ for i, (code, name) in enumerate(DIVS):
     put(inp, f"D{row}", 0.15, F_IN, fmt=PCT, fill=FILL_KEY, border=BOX)
     put(inp, f"E{row}", f"=IFERROR(D{row}/(1-D{row}),0)", fmt=PCT, border=BOX)
     put(inp, f"F{row}", "P&H" if code in ("P", "H") else "HVAC", border=BOX, align=Alignment(horizontal="center"))
-put(inp, "G33", "Margin = profit / contract. 15% is a placeholder: set your real target.", F_NOTE)
-put(inp, "G34", "Division names feed the SOV line names (Knowify uses 'HVAC'", F_NOTE)
-put(inp, "G35", "for ventilation; rename here if you prefer that).", F_NOTE)
+    put(inp, f"G{row}", 0.12, F_IN, fmt=PCT, fill=FILL_KEY, border=BOX)
+put(inp, "H33", "Drop-downs: self-perform 8% to 20% (standard 15%), subs 10% to 15%.", F_NOTE)
+put(inp, "H34", "Margin = profit / contract. Self-perform margin applies to labour, overhead,", F_NOTE)
+put(inp, "H35", "material, GCs and contingency; subs margin applies to subtrades only.", F_NOTE)
+put(inp, "H36", "Division names feed the SOV line names (Knowify uses 'HVAC' for ventilation).", F_NOTE)
 
 put(inp, "B38", "LEVELS (SOV splits rough-in and finishing labour by level)", F_SUB)
 header_row(inp, 39, ["Tag (e.g. BLDG A - L1)", "Floor", "Units", "SOV Weight %"], start_col=2)
@@ -363,7 +382,7 @@ put(lr, "B2", "UPDATED 2026-06-29", F_BOLD, fill=FILL_KEY)
 def crew_block(top, label, hours_formula):
     put(lr, f"B{top}", label, F_SUB)
     put(lr, f"F{top}", "Rate source:", F_BOLD, align=Alignment(horizontal="right"))
-    put(lr, f"G{top}", "Template", F_IN, fill=FILL_KEY, border=BOX)
+    put(lr, f"G{top}", "Knowify actual", F_IN, fill=FILL_KEY, border=BOX)
     dv_src = DataValidation(type="list", formula1='"Template,Knowify actual"', allow_blank=False)
     lr.add_data_validation(dv_src)
     dv_src.add(f"G{top}")
@@ -398,9 +417,7 @@ def crew_block(top, label, hours_formula):
     put(lr, f"K{t}", f"=SUM(K{first}:K{last})", fmt=CUR, bold=True, border=TOPLINE)
     put(lr, f"B{t + 1}", "Overhead $/hr (salaried staff, office, general)")
     put(lr, f"C{t + 1}", 22, F_IN, fmt=CUR2, fill=FILL_KEY, border=BOX)
-    put(lr, f"D{t + 1}", "Implied by company cost breakdown:", F_NOTE)
-    put(lr, f"G{t + 1}", f"={OH_RATIO}*I{t}", fmt=CUR2, bold=True, border=BOX)
-    put(lr, f"H{t + 1}", f'=IF(C{t + 1}<G{t + 1}*0.9,"Placeholder looks low",IF(C{t + 1}>G{t + 1}*1.1,"Placeholder looks high","In line"))', F_NOTE)
+    put(lr, f"D{t + 1}", "Manual entry per bid. Reference figures on RATE VARIANCE.", F_NOTE)
     put(lr, f"B{t + 2}", "FULLY LOADED RATE $/hr", F_BOLD)
     put(lr, f"C{t + 2}", f"=I{t}+C{t + 1}", fmt=CUR2, bold=True, fill=FILL_TOT, border=BOX)
     put(lr, f"B{t + 3}", "Mix used = 100% and hours x rate ties to breakdown")
@@ -413,7 +430,7 @@ def crew_block(top, label, hours_formula):
         "Knowify actuals: KNOWIFY TIME, all trades, burden included (confirmed).",
         "Office PM, admin and safety coordinator hours are left out of the Knowify mix",
         "because they are priced on SUBS & GC.",
-        "Rate source 'Knowify actual' needs Knowify data; otherwise the template is used.",
+        "Default source is Knowify actual (estimator decision, Oct 2026). Without Knowify data the template is used.",
     ]):
         put(lr, f"M{first + k}", txt, F_NOTE)
     return t
@@ -432,7 +449,6 @@ for i, (lab, f) in enumerate([
     ("Original template 'Budget with' (simple average)", "=AVERAGE(C6:C10)"),
     ("Template crew-mix weighted burdened wage", f"=C{ph_t}"),
     ("Rate used for this bid (P&H)", f"=I{ph_t}"),
-    ("Overhead implied by company cost breakdown (P&H)", f"=G{ph_t + 1}"),
     ("Fully loaded rate used: wage + overhead input", f"=C{ph_t + 2}"),
     ("Knowify actual crew average (job pasted)", f"={KN_BLENDED}"),
     ("Knowify actual + overhead", f"={KN_BLENDED}+C{ph_t + 1}"),
@@ -756,13 +772,13 @@ sg.freeze_panes = "C7"
 # =====================================================================
 bs = wb.create_sheet("BID SUMMARY")
 setw(bs, {"A": 6, "B": 22, "C": 10, "D": 15, "E": 13, "F": 14, "G": 13, "H": 13, "I": 13, "J": 12, "K": 15,
-          "L": 9, "M": 15, "N": 15, "O": 14, "P": 9, "Q": 9, "R": 11, "S": 10, "T": 9})
+          "L": 10, "M": 15, "N": 15, "O": 14, "P": 9, "Q": 9, "R": 11, "S": 10, "T": 9, "U": 9})
 title(bs, "BID SUMMARY: full cost, then margin")
 put(bs, "A2", '=IF(INPUTS!C4="","(enter project name on INPUTS)",INPUTS!C4)&"  |  "&INPUTS!C11&", "&INPUTS!C12', F_LINK)
 header_row(bs, 5, ["Code", "Division", "Hours", "Labour $ (wage+burden)", "Overhead $", "Material $ (incl PST)",
                    "Consumables $", "Subtrades $", "Gen. Cond. $", "Contingency $", "TOTAL COST $",
-                   "Target Margin", "Sell Price $", "CONTRACT $ (rounded)", "Gross Profit $", "Actual Margin",
-                   "Markup on Cost", "Per Unit $", "Per Sq Ft $", "Hrs / Unit"])
+                   "Self-Perform Margin", "Sell Price $", "CONTRACT $ (rounded)", "Gross Profit $", "Actual Margin",
+                   "Markup on Cost", "Per Unit $", "Per Sq Ft $", "Hrs / Unit", "Subs Margin"])
 for i, (code, nm) in enumerate(DIVS):
     r_ = 6 + i
     put(bs, f"A{r_}", f"=INPUTS!C{33 + i}", F_LINK, border=BOX, align=Alignment(horizontal="center"))
@@ -774,10 +790,11 @@ for i, (code, nm) in enumerate(DIVS):
     put(bs, f"G{r_}", f"=F{r_}*INPUTS!$C$25", fmt=CUR, border=BOX)
     put(bs, f"H{r_}", f"='SUBS & GC'!{SUB_COLS[i]}{SUB_LAST + 1}", F_LINK, fmt=CUR, border=BOX)
     put(bs, f"I{r_}", f"='SUBS & GC'!{SUB_COLS[i]}{GC_LAST + 1}", F_LINK, fmt=CUR, border=BOX)
-    put(bs, f"J{r_}", f"=SUM(D{r_}:I{r_})*INPUTS!$C$26", fmt=CUR, border=BOX)
+    put(bs, f"J{r_}", f"=CONTINGENCY!$G${8 + i}", F_LINK, fmt=CUR, border=BOX)
     put(bs, f"K{r_}", f"=SUM(D{r_}:J{r_})", fmt=CUR, bold=True, fill=FILL_TOT, border=BOX)
     put(bs, f"L{r_}", f"=INPUTS!D{33 + i}", F_LINK, fmt=PCT, border=BOX)
-    put(bs, f"M{r_}", f"=IFERROR(K{r_}/(1-L{r_}),0)", fmt=CUR, border=BOX)
+    put(bs, f"U{r_}", f"=INPUTS!G{33 + i}", F_LINK, fmt=PCT, border=BOX)
+    put(bs, f"M{r_}", f"=IFERROR((K{r_}-H{r_})/(1-L{r_}),0)+IFERROR(H{r_}/(1-U{r_}),0)", fmt=CUR, border=BOX)
     put(bs, f"N{r_}", f"=IF(M{r_}<=0,0,CEILING(M{r_},INPUTS!$C$28))", fmt=CUR, bold=True, fill=FILL_TOT, border=BOX)
     put(bs, f"O{r_}", f"=N{r_}-K{r_}", fmt=CUR, border=BOX)
     put(bs, f"P{r_}", f"=IFERROR(O{r_}/N{r_},0)", fmt=PCT, border=BOX)
@@ -797,6 +814,7 @@ put(bs, "M11", "GST (not in contract cost)", F_NOTE)
 put(bs, "N11", "=N10*INPUTS!$C$24", fmt=CUR)
 put(bs, "M12", "Contract + GST", F_NOTE)
 put(bs, "N12", "=N10+N11", fmt=CUR, bold=True)
+put(bs, "B11", "Sell price = (cost excluding subs) / (1 - self-perform margin) + subs / (1 - subs margin). Contingency sits inside cost, before the grand total.", F_NOTE)
 
 FIX_BID = "+".join(f"SUMIFS({est_rng(sh, 'L')},{est_rng(sh, 'C')},{ph_ref(FIX_EQ)})" for sh in ("PLUMBING EST", "HVAC EST"))
 
@@ -1261,6 +1279,120 @@ put(kr, f"B{CREW_ALL + 1}", "Knowify cost includes burden (confirmed). Office PM
 kr.freeze_panes = "A4"
 
 # =====================================================================
+# CONTINGENCY
+# =====================================================================
+ct = wb.create_sheet("CONTINGENCY")
+setw(ct, {"A": 3, "B": 44, "C": 18, "D": 14, "E": 15, "F": 15, "G": 17, "H": 14})
+title(ct, "CONTINGENCY (added to cost before the grand total)",
+      "General allowance on budgeted cost, plus any specific risks you want priced. Margin is applied on top.")
+put(ct, "B4", "General allowance (% of budgeted cost)", F_BOLD)
+put(ct, "C4", 0.02, F_IN, fmt=PCT, fill=FILL_KEY, border=BOX)
+put(ct, "D4", "Standard 2% (estimator, Oct 2026). Override per division in column D.", F_NOTE)
+header_row(ct, 7, ["Division", "Budgeted Cost (before contingency)", "Allowance %", "Allowance $",
+                   "Specific Risks $", "TOTAL CONTINGENCY $", "% of Budgeted Cost"], start_col=2)
+for i, (code, nm) in enumerate(DIVS):
+    r_ = 8 + i
+    put(ct, f"B{r_}", f"=INPUTS!B{33 + i}", F_LINK, border=BOX)
+    put(ct, f"C{r_}", f"=SUM('BID SUMMARY'!D{6 + i}:I{6 + i})", F_LINK, fmt=CUR, border=BOX)
+    put(ct, f"D{r_}", "=$C$4", F_IN, fmt=PCT, fill=FILL_IN, border=BOX)
+    put(ct, f"E{r_}", f"=C{r_}*D{r_}", fmt=CUR, border=BOX)
+    put(ct, f"F{r_}", f'=SUMIFS($E$16:$E$40,$D$16:$D$40,INPUTS!C{33 + i})', fmt=CUR, border=BOX)
+    put(ct, f"G{r_}", f"=E{r_}+F{r_}", fmt=CUR, bold=True, fill=FILL_TOT, border=BOX)
+    put(ct, f"H{r_}", f"=IFERROR(G{r_}/C{r_},0)", fmt=PCT, border=BOX)
+put(ct, "B12", "TOTAL", F_BOLD)
+for col in "CEFG":
+    put(ct, f"{col}12", f"=SUM({col}8:{col}11)", fmt=CUR, bold=True, border=TOPLINE)
+put(ct, "H12", "=IFERROR(G12/C12,0)", fmt=PCT, bold=True, border=TOPLINE)
+put(ct, "B14", "SPECIFIC RISKS (optional)", F_SUB)
+header_row(ct, 15, ["#", "Risk / Item", "", "Div", "Amount $", "Notes"], start_col=1)
+ct.merge_cells("B15:C15")
+for k in range(16, 41):
+    put(ct, f"A{k}", k - 15, border=BOX, align=Alignment(horizontal="center"))
+    put(ct, f"B{k}", None, F_IN, fill=FILL_IN, border=BOX)
+    ct.merge_cells(f"B{k}:C{k}")
+    put(ct, f"D{k}", None, F_IN, fill=FILL_IN, border=BOX)
+    put(ct, f"E{k}", None, F_IN, fmt=CUR, fill=FILL_IN, border=BOX)
+    put(ct, f"F{k}", None, F_IN, fill=FILL_IN, border=BOX)
+ct.merge_cells("F15:H15")
+for k in range(16, 41):
+    ct.merge_cells(f"F{k}:H{k}")
+dv_c = DataValidation(type="list", formula1=DIV_RANGE, allow_blank=True)
+ct.add_data_validation(dv_c)
+dv_c.add("D16:D40")
+put(ct, "B42", "Examples: schedule compression, winter heat, unclear scope, long-lead price escalation.", F_NOTE)
+ct.freeze_panes = "A8"
+
+# =====================================================================
+# RATE VARIANCE
+# =====================================================================
+va = wb.create_sheet("RATE VARIANCE")
+setw(va, {"A": 3, "B": 30, "C": 13, "D": 13, "E": 13, "F": 11, "G": 13, "H": 13, "I": 13, "J": 13, "K": 22})
+title(va, "RATE VARIANCE: template vs Knowify actuals vs last snapshot",
+      "Shows how far actual labour cost has moved. Update the snapshot after you review a new Knowify paste.")
+put(va, "B4", "Snapshot source", F_BOLD)
+put(va, "C4", "0-MARC25102 - 405 Marie Place (Ashton), Knowify export 2026-10-06", F_IN, fill=FILL_IN, border=BOX)
+va.merge_cells("C4:H4")
+header_row(va, 6, ["Classification", "Template $/hr", "Knowify Now $/hr", "Variance $/hr", "Variance %",
+                   "Snapshot $/hr", "Change Since Snapshot", "Knowify Mix Now", "Snapshot Mix", "Flag"], start_col=2)
+SNAP = [(40.25, 0.3795), (47.10, 0.2599), (51.21, 0.0893), (61.55, 0.1250), (65.80, 0.1463)]
+for i, cls in enumerate(CLASSES):
+    r_ = 7 + i
+    put(va, f"B{r_}", f"='LABOUR RATES'!B{6 + i}", F_LINK, border=BOX)
+    put(va, f"C{r_}", f"='LABOUR RATES'!C{6 + i}", F_LINK, fmt=CUR2, border=BOX)
+    put(va, f"D{r_}", f"='LABOUR RATES'!E{6 + i}", F_LINK, fmt=CUR2, border=BOX)
+    put(va, f"E{r_}", f"=D{r_}-C{r_}", fmt=CUR2, border=BOX)
+    put(va, f"F{r_}", f"=IFERROR(D{r_}/C{r_}-1,0)", fmt=PCT, border=BOX)
+    put(va, f"G{r_}", SNAP[i][0], F_IN, fmt=CUR2, fill=FILL_IN, border=BOX)
+    put(va, f"H{r_}", f"=IFERROR(D{r_}/G{r_}-1,0)", fmt=PCT, border=BOX)
+    put(va, f"I{r_}", f"='LABOUR RATES'!F{6 + i}", F_LINK, fmt=PCT, border=BOX)
+    put(va, f"J{r_}", SNAP[i][1], F_IN, fmt=PCT, fill=FILL_IN, border=BOX)
+    put(va, f"K{r_}", f'=IF(ABS(H{r_})>0.05,"Moved >5% since snapshot","")', border=BOX)
+put(va, "B12", "Weighted (crew mix)", F_BOLD)
+put(va, "C12", "='LABOUR RATES'!C11", F_LINK, fmt=CUR2, bold=True, border=TOPLINE)
+put(va, "D12", "='LABOUR RATES'!E11", F_LINK, fmt=CUR2, bold=True, border=TOPLINE)
+put(va, "E12", "=D12-C12", fmt=CUR2, bold=True, border=TOPLINE)
+put(va, "F12", "=IFERROR(D12/C12-1,0)", fmt=PCT, bold=True, border=TOPLINE)
+put(va, "G12", "=SUMPRODUCT(G7:G11,J7:J11)", fmt=CUR2, bold=True, border=TOPLINE)
+put(va, "H12", "=IFERROR(D12/G12-1,0)", fmt=PCT, bold=True, border=TOPLINE)
+put(va, "I12", "=SUM(I7:I11)", fmt=PCT, bold=True, border=TOPLINE)
+put(va, "J12", "=SUM(J7:J11)", fmt=PCT, bold=True, border=TOPLINE)
+put(va, "K12", '=IF(ABS(H12)>0.05,"Moved >5% since snapshot","")', bold=True, border=TOPLINE)
+va.conditional_formatting.add("K7:K12", FormulaRule(formula=['K7<>""'], fill=PatternFill("solid", fgColor="FFEB9C")))
+
+put(va, "B15", "EFFECT ON THIS BID", F_SUB)
+header_row(va, 16, ["Crew", "Rate Source", "Hours", "At Template $", "At Knowify $", "Difference $",
+                    "At Snapshot $", "Rate Used $/hr"], start_col=2)
+for i, (lbl, t) in enumerate((("P&H crew", ph_t), ("HVAC crew", hv_t))):
+    r_ = 17 + i
+    top = t - 7
+    put(va, f"B{r_}", lbl, border=BOX)
+    put(va, f"C{r_}", f"='LABOUR RATES'!G{top}", F_LINK, border=BOX)
+    put(va, f"D{r_}", f"='LABOUR RATES'!C{t + 4}", F_LINK, fmt=NUM, border=BOX)
+    put(va, f"E{r_}", f"=D{r_}*'LABOUR RATES'!C{t}", fmt=CUR, border=BOX)
+    put(va, f"F{r_}", f"=D{r_}*'LABOUR RATES'!E{t}", fmt=CUR, border=BOX)
+    put(va, f"G{r_}", f"=F{r_}-E{r_}", fmt=CUR, border=BOX)
+    put(va, f"H{r_}", f"=D{r_}*$G$12", fmt=CUR, border=BOX)
+    put(va, f"I{r_}", f"='LABOUR RATES'!I{t}", F_LINK, fmt=CUR2, border=BOX)
+put(va, "B19", "TOTAL", F_BOLD)
+for col in "DEFGH":
+    put(va, f"{col}19", f"=SUM({col}17:{col}18)", fmt=NUM if col == "D" else CUR, bold=True, border=TOPLINE)
+
+put(va, "B22", "OVERHEAD (reference only; bids use the manual $/hr on LABOUR RATES)", F_SUB)
+header_row(va, 23, ["Crew", "Manual $/hr", "Implied $/hr", "Variance $/hr", "Hours", "Variance $ on Bid"], start_col=2)
+for i, (lbl, t) in enumerate((("P&H crew", ph_t), ("HVAC crew", hv_t))):
+    r_ = 24 + i
+    put(va, f"B{r_}", lbl, border=BOX)
+    put(va, f"C{r_}", f"='LABOUR RATES'!C{t + 1}", F_LINK, fmt=CUR2, border=BOX)
+    put(va, f"D{r_}", f"={OH_RATIO}*'LABOUR RATES'!I{t}", fmt=CUR2, border=BOX)
+    put(va, f"E{r_}", f"=C{r_}-D{r_}", fmt=CUR2, border=BOX)
+    put(va, f"F{r_}", f"='LABOUR RATES'!C{t + 4}", F_LINK, fmt=NUM, border=BOX)
+    put(va, f"G{r_}", f"=E{r_}*F{r_}", fmt=CUR, border=BOX)
+put(va, "B27", "Implied $/hr = (Admin labour + General overhead) / Labour from the company cost breakdown on INPUTS, x the rate used.", F_NOTE)
+put(va, "B28", "A negative variance means the manual rate recovers less overhead than the company books suggest.", F_NOTE)
+put(va, "B30", "TO UPDATE THE SNAPSHOT: after pasting a new Knowify job and reviewing it, type the 'Knowify Now' values into the Snapshot columns.", F_NOTE)
+va.freeze_panes = "A7"
+
+# =====================================================================
 # AUDIT NOTES
 # =====================================================================
 au = wb.create_sheet("AUDIT NOTES")
@@ -1367,31 +1499,27 @@ def text_list(top, heading, items, marker=None):
 
 
 nxt = text_list(5 + len(FIND) + 2, "OPEN QUESTIONS FOR YOU", [
-    "Template rates ($53 to $96, weighted $64.75) vs Knowify actual crew average (about $49 to $50, burden included). "
-    "Do the template rates include anything Knowify does not (raises since the job started, vehicles, tools, travel)? "
-    "If not, switch Rate source to 'Knowify actual' on LABOUR RATES.",
-    "Overhead placeholder $22/hr vs about $33/hr implied by the company cost breakdown (Admin + General = 66% of field labour). "
-    "Which should bids carry?",
-    "Target margin per division (placeholder 15%). Do subs carry a lower margin than self-perform work?",
+    "Subs margin default is 12% (range 10% to 15%). Confirm the standard you want.",
     "Revit takeoff: send a sample xlsx when available so the import can map its rows to Item Codes.",
 ])
 text_list(nxt, "ANSWERED (decisions built into this workbook)", [
-    "$22/hr overhead covers all salaried staff company wide. A dedicated office project manager per job is a separate monthly cost, so the Office Project Manager GC line stays.",
-    "Field supervision GC lines are not double counted with the Foreman & PM share of the crew mix. Both stay.",
-    "Template labour rates are fully burdened. Knowify labour costs also include burden (confirmed).",
-    "Company cost breakdown (MF/CM, % of all costs) entered on INPUTS and used as the back-check on BID SUMMARY.",
-    "Knowify export format confirmed (Job Summary report). SOV and BUDGET use the same phase structure and line naming.",
-    "SOV keeps the split by floor, in Knowify naming: labour by level, material supply as its own line.",
-    "Takeoff will come from a Revit-based provider as xlsx; import to be built when a sample is available.",
+    "Overhead stays a manual entry per bid at $22/hr. The implied figure from the company breakdown is shown on RATE VARIANCE for reference only.",
+    "A dedicated office project manager per job is a separate monthly cost, so the Office Project Manager GC line stays.",
+    "Field supervision GC lines are not double counted with the Foreman & PM share of the crew mix.",
+    "Template rates include nothing Knowify lacks; both are fully burdened. Bids now default to Knowify actual rates and mix; RATE VARIANCE tracks drift.",
+    "Self-perform margin standard 15%, drop-down 8% to 20%. Subs margin drop-down 10% to 15%.",
+    "Contingency: 2% of budgeted cost by default, on its own CONTINGENCY tab, added before the grand total.",
+    "Company cost breakdown (MF/CM) entered on INPUTS and used as the back-check on BID SUMMARY.",
+    "Knowify Job Summary export format confirmed. SOV and BUDGET use the same phase structure and line naming.",
 ], marker="OK")
 au.freeze_panes = "A5"
 
 # ---------- workbook-wide settings ----------
-order = ["READ ME", "INPUTS", "LABOUR RATES", "PLUMBING EST", "HVAC EST", "SUBS & GC", "BID SUMMARY", "BUDGET",
-         "SCHEDULE OF VALUES", "KNOWIFY REVIEW", "KNOWIFY PHASES", "KNOWIFY TIME", "AUDIT NOTES"]
+order = ["READ ME", "INPUTS", "LABOUR RATES", "PLUMBING EST", "HVAC EST", "SUBS & GC", "CONTINGENCY", "BID SUMMARY",
+         "BUDGET", "SCHEDULE OF VALUES", "RATE VARIANCE", "KNOWIFY REVIEW", "KNOWIFY PHASES", "KNOWIFY TIME", "AUDIT NOTES"]
 wb._sheets = [wb[n] for n in order]
 tab_colors = {"READ ME": "7F7F7F", "INPUTS": "FFC000", "LABOUR RATES": "FFC000", "PLUMBING EST": "2F5597",
-              "HVAC EST": "2F5597", "SUBS & GC": "2F5597", "BID SUMMARY": "C00000", "BUDGET": "548235",
+              "HVAC EST": "2F5597", "SUBS & GC": "2F5597", "CONTINGENCY": "2F5597", "RATE VARIANCE": "70AD47", "BID SUMMARY": "C00000", "BUDGET": "548235",
               "SCHEDULE OF VALUES": "548235", "KNOWIFY REVIEW": "70AD47", "KNOWIFY PHASES": "A9D08E",
               "KNOWIFY TIME": "A9D08E", "AUDIT NOTES": "7F7F7F"}
 for ws in wb.worksheets:
