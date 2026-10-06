@@ -300,7 +300,7 @@ def crew_block(top, label, hours_formula):
     ok_cf(lr, f"C{t + 3}")
     put(lr, f"B{t + 4}", "Estimated hours (from estimate tabs)")
     put(lr, f"C{t + 4}", hours_formula, F_LINK, fmt=NUM, border=BOX)
-    put(lr, f"I{first}", "Rates are average hourly W/ burden (from original PRJ INFO D36:D40).", F_NOTE)
+    put(lr, f"I{first}", "Rates are fully burdened (confirmed): from original PRJ INFO D36:D40.", F_NOTE)
     put(lr, f"I{first + 1}", "Crew mix from original PRJ INFO E36:E40.", F_NOTE)
     put(lr, f"I{first + 2}", "Overhead $22/hr from original PRJ INFO H35/H44.", F_NOTE)
     put(lr, f"I{first + 3}", "Hours x mix x rate = the 'Cost by wage breakdown' column", F_NOTE)
@@ -592,7 +592,7 @@ GC = [
     ("Supervision - Hydronic", "=INPUTS!$C$21", "months", None, 7, {"H": 1}),
     ("Supervision - Ventilation", "=INPUTS!$C$22", "months", None, 7, {"V": 1}),
     ("Supervision - A/C", "=INPUTS!$C$22", "months", None, 7, {"AC": 1}),
-    ("Office Management (PM / estimating / admin)", "=MAX(INPUTS!$C$21,INPUTS!$C$22)", "months", 7500, 7, {}),
+    ("Office Project Manager (dedicated to this job)", "=MAX(INPUTS!$C$21,INPUTS!$C$22)", "months", 7500, 7, {}),
     ("Bonus - Plumbing", 1, "LS", None, 7, {"P": 1}),
     ("Bonus - Hydronic", 1, "LS", None, 7, {"H": 1}),
     ("Bonus - Ventilation", 1, "LS", None, 7, {"V": 1}),
@@ -625,11 +625,12 @@ for k in range(GC_FIRST, GC_LAST + 1):
     put(sg, f"H{k}", f"=E{k}*G{k}", fmt=CUR, border=BOX)
     alloc_inputs(k, g[5] if g else {})
     alloc_row(k)
-put(sg, f"C{GC_FIRST + 4}", "From PRJ INFO D53 'Office MGMT CTGCY'", F_NOTE)
+put(sg, f"C{GC_FIRST + 4}", "Dedicated office PM, per month", F_NOTE)
 note(sg, f"G{GC_FIRST + 4}", "$7,500/month from original PRJ INFO D53. The original charged this 100% to Plumbing; "
-                             "here it auto-splits by direct cost. Confirm it is not already inside the $22/hr overhead.")
-note(sg, f"B{GC_FIRST}", "Check for double counting: Foreman & PM is already 14% of the crew mix on LABOUR RATES. "
-                         "Only enter supervision here if it is NOT already in the crew hours.")
+                             "here it auto-splits by direct cost. Confirmed: the $22/hr overhead covers salaried staff company wide; "
+                             "this line is the PM assigned to this job, so it is not a double count.")
+note(sg, f"B{GC_FIRST}", "Confirmed: field supervision here is separate from the Foreman & PM share of the crew mix, "
+                         "so it is not a double count.")
 put(sg, f"B{GC_LAST + 1}", "GENERAL CONDITIONS TOTAL", F_BOLD)
 for col in "HMNOP":
     put(sg, f"{col}{GC_LAST + 1}", f"=SUM({col}{GC_FIRST}:{col}{GC_LAST})", fmt=CUR, bold=True, fill=FILL_TOT, border=TOPLINE)
@@ -973,8 +974,8 @@ FIND = [
      "Supervision qty links to INPUTS HVAC duration."),
     ("MED", "PRJ SUMMARY row 59 (Supervision - Office)",
      "$7,500/month x 24 months = $180,000 (+15% = $207,000) is allocated 100% to Plumbing, using the HVAC duration.",
-     "Plumbing looks $207,000 more expensive than it is; HVAC looks cheaper. Also check it is not already inside the $22/hr overhead.",
-     "Office Management auto-splits by direct cost (or set your own %). Flagged for double-count review."),
+     "Plumbing looks $207,000 more expensive than it is; HVAC looks cheaper. Confirmed this is a real job cost (dedicated PM), separate from the $22/hr overhead.",
+     "Kept as 'Office Project Manager'. Auto-splits by direct cost across divisions (or set your own %)."),
     ("HIGH", "PRJ SUMMARY M55:T79 (\"50-50 Div's\" split)",
      "GC split formulas divide by C4+C5 with no IFERROR. With no HVAC entered they return a divide-by-zero (DIV/0) error.",
      "PRJ SUMMARY F6, G6, J6, W6 and J7 all show DIV/0 errors, so the grand total breaks on any plumbing-only job.",
@@ -999,10 +1000,10 @@ FIND = [
      "Condensate drains appear in both Plumbing and HVAC.",
      "Risk of pricing the same scope twice.",
      "Kept on both tabs, labelled 'if by Plumbing' / 'if by HVAC'. Use only one."),
-    ("LOW", "PRJ INFO E40 (Foreman & PM 14%) and PRJ SUMMARY rows 55-58",
+    ("OK", "PRJ INFO E40 (Foreman & PM 14%) and PRJ SUMMARY rows 55-58",
      "Foreman & PM time is in the crew mix and supervision is also a GC line.",
-     "Possible double count of supervision.",
-     "Comment on SUBS & GC supervision rows; question for you below."),
+     "Reviewed with estimator: these are separate costs, not a double count.",
+     "Both kept: crew mix on LABOUR RATES, supervision on SUBS & GC."),
     ("LOW", "BUDGET PLAN J1",
      "Supervision/PM wage hardcoded at $50/hr, a fourth labour rate in the file.",
      "Budget supervision hours do not match the bid.",
@@ -1019,13 +1020,10 @@ for i, (sev, where, what, why, fix) in enumerate(FIND):
         c = put(au, f"{get_column_letter(1 + j)}{r_}", v, border=BOX,
                 align=Alignment(wrap_text=True, vertical="top", horizontal="center" if j < 2 else "left"))
     au[f"B{r_}"].font = Font(name=FONT, size=10, bold=True,
-                             color={"HIGH": "C00000", "MED": "C65911", "LOW": "7F7F7F"}[sev])
+                             color={"HIGH": "C00000", "MED": "C65911", "LOW": "7F7F7F", "OK": "006100"}[sev])
 q0 = 5 + len(FIND) + 2
 put(au, f"B{q0}", "OPEN QUESTIONS FOR YOU", F_SUB)
 QS = [
-    "Is the $22/hr overhead meant to cover office management ($7,500/month)? If yes, delete the Office Management GC line to avoid double counting.",
-    "Is Foreman & PM time already in the 14% crew mix? If yes, leave the Supervision GC rows at $0.",
-    "Are the 'Average hourly rates W/ burden' fully burdened (CPP, EI, WCB, vacation, benefits, union dues)? If not, what burden % should be added?",
     "Target margin per division (placeholder is 15%). Do subs carry a lower margin than self-perform work?",
     "Your typical COGS % (labour, material, subs, GC, profit) to fill INPUTS rows 69-75.",
     "What does a Knowify job cost export look like (column names)? Item Codes on the estimate can match your Knowify cost codes.",
@@ -1037,6 +1035,18 @@ for i, q in enumerate(QS):
     put(au, f"C{q0 + 1 + i}", q, align=Alignment(wrap_text=True, vertical="top"))
     au.merge_cells(f"C{q0 + 1 + i}:F{q0 + 1 + i}")
     au.row_dimensions[q0 + 1 + i].height = 28
+a0 = q0 + len(QS) + 2
+put(au, f"B{a0}", "ANSWERED (decisions built into this workbook)", F_SUB)
+ANS = [
+    "$22/hr overhead covers all salaried staff company wide. A dedicated office project manager per job is a separate monthly cost, so the Office Project Manager GC line stays.",
+    "Field supervision GC lines are not double counted with the Foreman & PM share of the crew mix. Both stay.",
+    "Labour rates on LABOUR RATES are fully burdened (CPP, EI, WCB, vacation, benefits). No extra burden % is added.",
+]
+for i, a in enumerate(ANS):
+    put(au, f"B{a0 + 1 + i}", "OK", Font(name=FONT, size=10, bold=True, color="006100"), align=Alignment(horizontal="center", vertical="top"))
+    put(au, f"C{a0 + 1 + i}", a, align=Alignment(wrap_text=True, vertical="top"))
+    au.merge_cells(f"C{a0 + 1 + i}:F{a0 + 1 + i}")
+    au.row_dimensions[a0 + 1 + i].height = 28
 au.freeze_panes = "A5"
 
 # ---------- workbook-wide settings ----------
