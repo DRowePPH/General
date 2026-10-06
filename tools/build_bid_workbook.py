@@ -5,7 +5,7 @@ full transparent cost (wage + burden, overhead, material incl. PST, subs, GCs)
 with margin added on top, plus Budget, Schedule of Values (Knowify phase
 naming) and Knowify actuals review tabs.
 
-Usage: python tools/build_bid_workbook.py [output.xlsx] [knowify_job_summary.xlsx]
+Usage: python tools/build_bid_workbook.py [output.xlsx] [knowify_job_summary.xlsx] [takeoff.xlsx]
 The optional Knowify export prefills the KNOWIFY PHASES and KNOWIFY TIME tabs
 (employee names are replaced with 'Employee nn').
 """
@@ -21,6 +21,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "New Excel bidding Spreadsheet.xlsx"
 KNOWIFY_SRC = sys.argv[2] if len(sys.argv) > 2 else None
+TAKEOFF_SRC = sys.argv[3] if len(sys.argv) > 3 else None
 
 # ---------- styles ----------
 FONT = "Arial"
@@ -121,10 +122,13 @@ MAT_SUPPLY = 4
 FIX_EQ = 5
 CLASSES = ["Apprentice Lvl 1-2", "Apprentice Lvl 3-6", "Apprentice Lvl 7-8", "Journeyman Lvl 1-2", "Foreman & PM"]
 
-LEVELS = [("U/G", "Ground Work", None), ("P-02", "Parking 2", None), ("PRKG", "Parking 1", None),
+LEVELS_438 = [("P1", "Parkade", None), ("L1", "Level 1 (CRU, lobby)", None), ("L2", "Level 2 (parking, garbage)", None)] + \
+    [(f"L{n}", f"Level {n}", 8) for n in range(3, 13)] + [("L13", "Level 13 (amenity, live/work)", None), ("ROOF", "Roof", None)]
+LEVELS_OLD = [("U/G", "Ground Work", None), ("P-02", "Parking 2", None), ("PRKG", "Parking 1", None),
           ("L-01", "Level 1", 24), ("L-02", "Level 2", 25), ("L-03", "Level 3", 25), ("L-04", "Level 4", 25),
           ("L-05", "Level 5", 24), ("L-06", "Level 6", None), ("L-07", "Level 7", None), ("L-08", "Level 8", None),
           ("L-09", "Level 9", None), ("L-10", "Level 10", None), ("ROOF", "Roof", None)]
+LEVELS = LEVELS_438 if TAKEOFF_SRC else LEVELS_OLD
 LV_N = 24
 
 # INPUTS row map
@@ -167,7 +171,8 @@ put(ws, f"B{r}", "FLOW", F_SUB); r += 1
 flow = [
     ("1. INPUTS", "Project info, durations, PST, consumables, contingency, target margin per division, levels, your typical COGS %."),
     ("2. LABOUR RATES", "Crew mix per trade (same layout as the original PRJ INFO rates block), shown beside Knowify actual rates and mix."),
-    ("3. PLUMBING EST / HVAC EST", "One row per item: Qty x Material $/unit and Qty x Hrs/unit. Same columns on both sheets so HVAC ties back exactly like Plumbing."),
+    ("2b. TAKEOFF / TAKEOFF CHECK", "Paste the takeoff provider's 'Takeoff Summary' sheet into TAKEOFF at A1. TAKEOFF CHECK lists every line: priced, missing, no unit cost, or TBC."),
+    ("3. PLUMBING EST / HVAC EST", "Left to right: takeoff qty, unit rates, TRUE COST, optional ADJUSTMENTS, FINAL COST. Same columns on both sheets."),
     ("4. SUBS & GC", "Subtrade quotes and general conditions. Allocate by % to each division, or leave % blank to auto-split by direct cost."),
     ("4b. CONTINGENCY", "2% general allowance on budgeted cost (adjustable) plus specific risk items. Added to cost before the grand total."),
     ("5. BID SUMMARY", "Cost by type and division, then margin (self-perform and subs). Back-check vs company cost breakdown. Holds every tie-out check."),
@@ -228,10 +233,13 @@ setw(inp, {"A": 3, "B": 42, "C": 24, "D": 16, "E": 16, "F": 14, "G": 44, "J": 10
 title(inp, "INPUTS", "Blue cells are inputs. Bright yellow = key assumption to review on every bid.")
 put(inp, "B3", "PROJECT INFORMATION", F_SUB)
 for row, lab, val in [
-    (4, "Project Name", None), (5, "Quote Number", None), (6, "Project Type", "Multi-Family"),
-    (7, "Owner", None), (8, "General Contractor", None), (9, "Architect", None), (10, "Mech. Engineer", None),
-    (11, "Site Address", "2650 East 41st Ave"), (12, "City", "Vancouver"), (13, "Proposal Date", None),
-    (14, "Proposal Rev", None), (15, "Prepared By", "Paris Mechanical Ltd"), (16, "Drawings", "Issued For Tender"),
+    (4, "Project Name", "438 West Pender Street" if TAKEOFF_SRC else None), (5, "Quote Number", None),
+    (6, "Project Type", "Mixed-use residential (80 suites + CRU)" if TAKEOFF_SRC else "Multi-Family"),
+    (7, "Owner", None), (8, "General Contractor", "Marcon" if TAKEOFF_SRC else None), (9, "Architect", None),
+    (10, "Mech. Engineer", "Arcadis / Edge Consultants" if TAKEOFF_SRC else None),
+    (11, "Site Address", "438 West Pender Street" if TAKEOFF_SRC else "2650 East 41st Ave"), (12, "City", "Vancouver"),
+    (13, "Proposal Date", None), (14, "Proposal Rev", None), (15, "Prepared By", "Paris Mechanical Ltd"),
+    (16, "Drawings", "Final IFT Rev 5 (Sept 11 2026)" if TAKEOFF_SRC else "Issued For Tender"),
     (17, "Gross Floor Area (sq ft)", None),
 ]:
     put(inp, f"B{row}", lab)
@@ -359,6 +367,28 @@ def est_sumifs(col, div_expr, phase_expr=None):
     return "+".join(parts)
 
 
+def est_mat(div_expr, phases, eq):
+    """Material (col V) for phases; eq='Y' only flagged rows, '<>Y' unflagged, None all."""
+    parts = []
+    for sh in ("PLUMBING EST", "HVAC EST"):
+        for q in phases:
+            s_ = f"SUMIFS({est_rng(sh, 'V')},{est_rng(sh, 'C')},{ph_ref(q)}"
+            if div_expr:
+                s_ += f",{est_rng(sh, 'B')},{div_expr}"
+            if eq:
+                s_ += f",{est_rng(sh, 'L')},\"{eq}\""
+            parts.append(s_ + ")")
+    return "+".join(parts)
+
+
+def mat_supply(div_expr):
+    return est_mat(div_expr, (2, 3, 4), "<>Y")
+
+
+def mat_equip(div_expr):
+    return est_mat(div_expr, (FIX_EQ,), None) + "+" + est_mat(div_expr, (2, 3, 4), "Y")
+
+
 def rv(col, a=KP_FIRST, b=KP_LAST):
     return f"{REV}!${col}${a}:${col}${b}"
 
@@ -416,7 +446,7 @@ def crew_block(top, label, hours_formula):
     put(lr, f"J{t}", f"=SUM(J{first}:J{last})", fmt=NUM, bold=True, border=TOPLINE)
     put(lr, f"K{t}", f"=SUM(K{first}:K{last})", fmt=CUR, bold=True, border=TOPLINE)
     put(lr, f"B{t + 1}", "Overhead $/hr (salaried staff, office, general)")
-    put(lr, f"C{t + 1}", 22, F_IN, fmt=CUR2, fill=FILL_KEY, border=BOX)
+    put(lr, f"C{t + 1}", 32.71, F_IN, fmt=CUR2, fill=FILL_KEY, border=BOX)
     put(lr, f"D{t + 1}", "Manual entry per bid. Reference figures on RATE VARIANCE.", F_NOTE)
     put(lr, f"B{t + 2}", "FULLY LOADED RATE $/hr", F_BOLD)
     put(lr, f"C{t + 2}", f"=I{t}+C{t + 1}", fmt=CUR2, bold=True, fill=FILL_TOT, border=BOX)
@@ -436,8 +466,8 @@ def crew_block(top, label, hours_formula):
     return t
 
 
-ph_t = crew_block(4, "PLUMBING & HYDRONIC CREW", "=" + est_sumifs("M", '"P"') + "+" + est_sumifs("M", '"H"'))
-hv_t = crew_block(19, "HVAC CREW (ventilation & A/C)", "=" + est_sumifs("M", '"V"') + "+" + est_sumifs("M", '"AC"'))
+ph_t = crew_block(4, "PLUMBING & HYDRONIC CREW", "=" + est_sumifs("W", '"P"') + "+" + est_sumifs("W", '"H"'))
+hv_t = crew_block(19, "HVAC CREW (ventilation & A/C)", "=" + est_sumifs("W", '"V"') + "+" + est_sumifs("W", '"AC"'))
 PH_WAGE, PH_OH = f"'LABOUR RATES'!$I${ph_t}", f"'LABOUR RATES'!$C${ph_t + 1}"
 HV_WAGE, HV_OH = f"'LABOUR RATES'!$I${hv_t}", f"'LABOUR RATES'!$C${hv_t + 1}"
 
@@ -466,154 +496,242 @@ lr.freeze_panes = "A3"
 # =====================================================================
 # ESTIMATE SHEETS
 # =====================================================================
-EST_HEAD = ["Item Code", "Div", "Phase", "Description", "Qty", "Unit", "Material $/Unit", "Hrs/Unit",
-            "Add Material $", "Add Hrs", "PST? (Y/N)", "Material $ (incl PST)", "Hours", "Labour $ (wage+burden)",
-            "Overhead $", "TOTAL COST $", "Knowify Labour Actual/Budget", "Knowify Material Actual/Budget", "History Flag"]
+EST_HEAD = ["Takeoff Ref", "Div", "Phase", "Description", "Takeoff Qty", "Manual Qty", "Qty Used", "Unit",
+            "Material $/Unit", "Hrs/Unit", "PST? (Y/N)", "Equip Supply? (Y/N)",
+            "Material $ (incl PST)", "Hours", "Labour $", "Overhead $", "TRUE COST $",
+            "Adj Material $", "Adj Hours %", "Adj Hours", "Adjustment Note",
+            "Material $", "Hours", "Labour $", "Overhead $", "TOTAL COST $",
+            "Knowify Labour Act/Bud", "Knowify Material Act/Bud", "History Flag", "Takeoff Flag"]
+TK = "TAKEOFF CHECK"
+TK_FIRST, TK_LAST = 2, 600
 
-PL_ITEMS = [
-    ("P-UG-SUMP", "P", 1, "Sumps & Interceptors", "ea", None, None, None),
-    ("P-UG-STRM", "P", 1, "Storm Water & Drain Tile", "lf", None, None, None),
-    ("P-UG-SAN", "P", 1, "Sanitary (underground)", "lf", None, None, None),
-    ("P-UG-DW", "P", 1, "Domestic Water (underground)", "lf", None, None, None),
-    ("P-RI-STRM", "P", 2, "DWV Storm Water", "lf", None, None, None),
-    ("P-RI-SAN", "P", 2, "DWV Sanitary (Drainage/Vents)", "lf", None, None, None),
-    ("P-RI-WR2", "P", 2, "2-Piece Bathroom (WC, LAV)", "ea", 550, 3, None),
-    ("P-RI-WR3T", "P", 2, "3-Piece Bathroom (WC, LAV, TUB)", "ea", 860, 5, None),
-    ("P-RI-WR3S", "P", 2, "3-Piece Bathroom (WC, LAV, SH)", "ea", 860, 5, None),
-    ("P-RI-WR4T", "P", 2, "4-Piece Bathroom (WC, 2LAV, TUB)", "ea", 990, 6, None),
-    ("P-RI-WR4S", "P", 2, "4-Piece Bathroom (WC, 2LAV, SH)", "ea", 990, 6, None),
-    ("P-RI-WR4TS", "P", 2, "4-Piece Bathroom (WC, LAV, TUB & SH)", "ea", 1310, 6, None),
-    ("P-RI-WR5", "P", 2, "5-Piece Bathroom (WC, 2LAV, TUB & SH)", "ea", 1460, 6, None),
-    ("P-RI-LAUN", "P", 2, "Laundry - 4\" Wet Vent", "ea", 280, 2, None),
-    ("P-RI-KS3", "P", 2, "Kitchen Sink - 3\" Vent", "ea", 240, 2, None),
-    ("P-RI-KS4", "P", 2, "Kitchen Sink - 4\" Vent", "ea", 250, 2, None),
-    ("P-RI-DWD", "P", 2, "Domestic Water Distribution Piping", "lf", None, None, None),
-    ("P-RI-DWS", "P", 2, "Domestic Water Insuite Piping", "suite", 800, 12, 123),
-    ("P-RI-IRR", "P", 2, "Irrigation", "LS", None, None, None),
-    ("P-RI-COND", "P", 2, "Condensate Drains (if by Plumbing)", "LS", None, None, None),
-    ("P-RI-GAS", "P", 2, "Gas & Boiler Vents", "LS", None, None, None),
-    ("P-RI-DRN", "P", 2, "Drains & Hose Bibs (rough-in)", "ea", None, None, None),
-    ("P-RI-WER", "P", 2, "Water Entry Room", "LS", None, None, None),
-    ("P-RI-FLSH", "P", 2, "Roof Flashings", "ea", None, None, None),
-    ("P-RI-CAN", "P", 2, "Canning / Cutting / Layout", "LS", None, None, None),
-    ("P-RI-CLN", "P", 2, "Clean-up", "LS", None, None, None),
-    ("P-FN-FIX", "P", 3, "Set Plumbing Fixtures", "ea", None, None, None),
-    ("P-FN-AP", "P", 3, "Install Access Panels", "ea", None, None, None),
-    ("P-FN-LBL", "P", 3, "Pipe Labelling", "LS", None, None, None),
-    ("P-EQ-FIX", "P", 5, "Plumbing Fixtures & Access Panels Supply", "LS", None, None, None),
-    ("P-EQ-DRN", "P", 5, "Drains Supply (FD, AD, RD, HB, TD, TP)", "LS", None, None, None),
-    ("P-EQ-EQP", "P", 5, "Mech Room & Equipment Supply (DHW, pumps, tanks)", "LS", None, None, None),
-    ("P-TS-TEST", "P", 6, "Testing", "LS", None, None, None),
-    ("P-CL-DOCS", "P", 7, "As-builts, O&M, Closeout", "LS", None, None, None),
-    ("H-UG-PIPE", "H", 1, "Hydronic U/G Piping", "lf", None, None, None),
-    ("H-RI-DIST", "H", 2, "Heating Distribution Piping", "lf", None, None, None),
-    ("H-RI-MAN", "H", 2, "Manifolds", "ea", None, None, None),
-    ("H-RI-SUITE", "H", 2, "Hydronic Insuite Piping", "suite", None, 8, None),
-    ("H-RI-GLY", "H", 2, "Glycol Loop", "LS", None, None, None),
-    ("H-RI-CAN", "H", 2, "Canning / Cutting / Layout", "LS", None, None, None),
-    ("H-RI-CLN", "H", 2, "Clean-up", "LS", None, None, None),
-    ("H-FN-AP", "H", 3, "Install Access Panels", "ea", None, None, None),
-    ("H-FN-LBL", "H", 3, "Pipe Labelling", "LS", None, None, None),
-    ("H-EQ-MECH", "H", 5, "Mechanical Room", "LS", None, None, None),
-    ("H-EQ-EQP", "H", 5, "Hydronic Equipment (boilers, pumps, HX)", "LS", None, None, None),
-    ("H-TS-TEST", "H", 6, "Testing", "LS", None, None, None),
-]
-HV_ITEMS = [
-    ("V-RI-DUCT", "V", 2, "Distribution Ductwork", "lb", None, None, None),
-    ("V-RI-SUITE", "V", 2, "Insuite Ductwork", "suite", None, None, None),
-    ("V-RI-COND", "V", 2, "Condensate Drains (if by HVAC)", "LS", None, None, None),
-    ("V-RI-INS", "V", 2, "Thermal Insulation (in-house)", "LS", None, None, None),
-    ("V-RI-CAN", "V", 2, "Canning / Cutting / Layout", "LS", None, None, None),
-    ("V-RI-CLN", "V", 2, "Clean-up", "LS", None, None, None),
-    ("V-FN-GRL", "V", 3, "Grilles & Ventilation Terminations", "ea", None, None, None),
-    ("V-FN-AP", "V", 3, "Install Access Panels", "ea", None, None, None),
-    ("V-FN-LBL", "V", 3, "Duct Labelling", "LS", None, None, None),
-    ("V-EQ-FAN", "V", 5, "Ventilation Equipment Supply (fans, ERVs)", "ea", None, None, None),
-    ("V-TS-TEST", "V", 6, "Testing", "LS", None, None, None),
-    ("AC-RI-DUCT", "AC", 2, "Distribution Ductwork", "lb", None, None, None),
-    ("AC-RI-SUITE", "AC", 2, "Insuite Ductwork", "suite", None, None, None),
-    ("AC-RI-COND", "AC", 2, "Condensate Drains (if by HVAC)", "LS", None, None, None),
-    ("AC-RI-LINE", "AC", 2, "Refrigeration Linesets", "lf", None, None, None),
-    ("AC-RI-PTAC", "AC", 2, "PTAC Rough-in", "ea", None, None, None),
-    ("AC-RI-LS12", "AC", 2, "AC-1.1/2 Lineset", "ea", None, None, None),
-    ("AC-RI-CAN", "AC", 2, "Canning / Cutting / Layout", "LS", None, None, None),
-    ("AC-RI-CLN", "AC", 2, "Clean-up", "LS", None, None, None),
-    ("AC-FN-GRL", "AC", 3, "Diffusers & Registers", "ea", None, None, None),
-    ("AC-FN-AP", "AC", 3, "Install Access Panels", "ea", None, None, None),
-    ("AC-EQ-AHU", "AC", 5, "AHUs & Heat Pumps Supply", "ea", None, None, None),
-    ("AC-TS-TEST", "AC", 6, "Testing", "LS", None, None, None),
-]
+
+def tk(col):
+    return f"'{TK}'!${col}${TK_FIRST}:${col}${TK_LAST}"
+
+
+def classify(sec, tag):
+    t = tag.upper()
+    if sec == "A":
+        if t in ("WC", "SH", "L", "SK"):
+            return "P", 3, "Y"
+        return ("P", 2, "Y") if t == "W/M" else ("P", 2, "")
+    if sec == "B":
+        if t.startswith("FCU"):
+            return "AC", 2, "Y"
+        if t == "TSTAT":
+            return "AC", 3, "Y"
+        if t == "RG-FCU":
+            return "AC", 3, ""
+        if t in ("ERV-A", "EF-A"):
+            return "V", 2, "Y"
+        if t == "AP-ERV":
+            return "V", 3, ""
+        return "V", 2, ""
+    if sec == "C":
+        if t.startswith("CU") or t in ("ITM", "DSE401B71", "CP"):
+            return "AC", 5, "Y"
+        if t == "REF-INS":
+            return "AC", 2, ""
+        return "AC", 2, "Y"
+    if sec == "D":
+        return "V", 5, "Y"
+    if sec == "E":
+        if t == "DET":
+            return "P", 1, ""
+        if t in ("HT", "TP"):
+            return "P", 2, ""
+        return "P", 5, "Y"
+    if sec == "F":
+        return "P", 2, "Y"
+    if sec == "G":
+        return "P", 3, "Y"
+    if sec == "H":
+        return ("P", 5, "") if t == "FO-TANK" else ("P", 2, "")
+    if sec == "I":
+        if t.startswith("S-1"):
+            return "V", 3, "Y"
+        if t == "FLEX-FCU":
+            return "AC", 2, ""
+        if t == "FSD":
+            return "V", 2, "Y"
+        return "V", 2, "Y"
+    if sec == "J":
+        return {"REF-V": ("AC", 2, ""), "DUCT": ("V", 2, "")}.get(t, ("P", 2, ""))
+    return "P", 2, ""
+
+
+def load_takeoff(path):
+    """Return raw rows (for the paste tab) and unique estimate rows per Takeoff Ref."""
+    src = load_workbook(path, data_only=True)["Takeoff Summary"]
+    raw = [[c.value for c in row] for row in src.iter_rows(min_row=1, max_row=src.max_row, max_col=10)]
+    items, seen, sec = [], {}, ""
+    for row in raw:
+        a, b = row[0], row[1]
+        if a and not b and isinstance(a, str) and len(a) > 1 and a[1] == ".":
+            sec = a[0]
+            continue
+        if not b or b == "Tag" or not sec:
+            continue
+        ref = f"{sec}:{b}"
+        if ref in seen:
+            continue
+        div, ph, eq = classify(sec, str(b))
+        model = row[3]
+        desc = row[2] if model in (None, "—", "-", "?") else f"{row[2]} [{model}]"
+        seen[ref] = True
+        items.append((ref, div, ph, desc, row[7], eq))
+    return raw, items
+
+
+TAKEOFF_RAW, TAKEOFF_ITEMS = load_takeoff(TAKEOFF_SRC) if TAKEOFF_SRC else ([], [])
+if TAKEOFF_ITEMS:
+    PL_ITEMS = [(ref, div, ph, desc, unit, None, None, eq, None) for ref, div, ph, desc, unit, eq in TAKEOFF_ITEMS if div in ("P", "H")]
+    HV_ITEMS = [(ref, div, ph, desc, unit, None, None, eq, None) for ref, div, ph, desc, unit, eq in TAKEOFF_ITEMS if div in ("V", "AC")]
+else:
+    PL_ITEMS = [
+        (None, "P", 2, "2-Piece Bathroom (WC, LAV)", "ea", 550, 3, "", None),
+        (None, "P", 2, "3-Piece Bathroom (WC, LAV, TUB)", "ea", 860, 5, "", None),
+        (None, "P", 2, "Domestic Water Insuite Piping", "suite", 800, 12, "", None),
+    ]
+    HV_ITEMS = [(None, "V", 2, "Distribution Ductwork", "lb", None, None, "", None)]
 
 
 def build_est(name, items, subtitle):
     ws = wb.create_sheet(name)
-    setw(ws, {"A": 13, "B": 6, "C": 32, "D": 42, "E": 9, "F": 7, "G": 13, "H": 10, "I": 13, "J": 9, "K": 8,
-              "L": 15, "M": 10, "N": 16, "O": 13, "P": 16, "Q": 13, "R": 13, "S": 22})
+    setw(ws, {"A": 15, "B": 5, "C": 30, "D": 48, "E": 10, "F": 10, "G": 9, "H": 6, "I": 12, "J": 9, "K": 7, "L": 8,
+              "M": 14, "N": 9, "O": 13, "P": 12, "Q": 14, "R": 12, "S": 9, "T": 9, "U": 22,
+              "V": 14, "W": 9, "X": 13, "Y": 12, "Z": 15, "AA": 11, "AB": 11, "AC": 20, "AD": 18})
     title(ws, name, subtitle)
     put(ws, "A3", "TOTALS", F_BOLD)
-    for col in "LMNOP":
-        put(ws, f"{col}3", f"=SUM({col}{EST_FIRST}:{col}{EST_LAST})", fmt=NUM if col == "M" else CUR, bold=True,
+    for col in "MNOPQRTVWXYZ":
+        put(ws, f"{col}3", f"=SUM({col}{EST_FIRST}:{col}{EST_LAST})", fmt=NUM if col in "NTW" else CUR, bold=True,
             fill=FILL_TOT, border=BOX)
-    put(ws, "A4", "Labour $ = Hours x crew-mix weighted burdened wage. Overhead $ = Hours x overhead $/hr. "
-                  "P/H rows use the P&H crew, V/AC rows use the HVAC crew. Q:R show how the same Div + Phase ran vs "
-                  "budget on the Knowify job pasted (1.30x = 30% over).", F_NOTE)
+    for rng_, lab, fill in (("A5:L5", "QUANTITY & UNIT RATES (inputs)", FILL_IN), ("M5:Q5", "TRUE COST", FILL_TOT),
+                            ("R5:U5", "ADJUSTMENTS (optional)", FILL_KEY), ("V5:Z5", "FINAL COST (true cost + adjustments)", FILL_TOT),
+                            ("AA5:AD5", "CHECKS", FILL_SEC)):
+        ws.merge_cells(rng_)
+        c = ws[rng_.split(":")[0]]
+        c.value = lab
+        c.font = F_BOLD
+        c.fill = fill
+        c.alignment = Alignment(horizontal="center")
+    put(ws, "A4", "Qty comes from TAKEOFF via the Takeoff Ref (Manual Qty overrides it). Labour $ = hours x crew rate; "
+                  "Overhead $ = hours x overhead $/hr (LABOUR RATES). Adjustments sit beside true cost so every change stays visible.", F_NOTE)
     header_row(ws, 6, EST_HEAD)
     for i in range(EST_FIRST, EST_LAST + 1):
         idx = i - EST_FIRST
         item = items[idx] if idx < len(items) else None
+        vals = {"K": "Y"}
         if item:
-            code, div, ph, desc, unit, mat, hrs, qty = item
-            vals = {"A": code, "B": div, "C": PHASES[ph], "D": desc, "E": qty, "F": unit, "G": mat, "H": hrs, "K": "Y"}
-        else:
-            vals = {"K": "Y"}
-        for col in "ABCDEFGHIJK":
+            ref, div, ph, desc, unit, mat, hrs, eq, mq = item
+            vals.update({"A": ref, "B": div, "C": PHASES[ph], "D": desc, "F": mq, "H": unit, "I": mat, "J": hrs, "L": eq or None})
+        for col in "ABCDFHIJKL":
             c = put(ws, f"{col}{i}", vals.get(col), F_IN, fill=FILL_IN, border=BOX)
-            if col in "EJ":
+            if col == "F":
                 c.number_format = NUM1
-            if col in "GI":
+            if col == "I":
                 c.number_format = CUR2
-            if col == "H":
+            if col == "J":
                 c.number_format = '0.00;(0.00);"-"'
+        for col in "RSTU":
+            c = put(ws, f"{col}{i}", None, F_IN, fill=FILL_KEY if col != "U" else FILL_IN, border=BOX)
+            c.number_format = {"R": CUR, "S": PCT, "T": NUM1, "U": "@"}[col]
+        put(ws, f"E{i}", f'=IF($A{i}="","",SUMIFS({tk("D")},{tk("B")},$A{i}))', F_LINK, fmt=NUM1, border=BOX)
+        put(ws, f"G{i}", f'=IF($F{i}<>"",$F{i},N($E{i}))', fmt=NUM1, border=BOX)
         rate_w = f'IF(OR($B{i}="V",$B{i}="AC"),{HV_WAGE},{PH_WAGE})'
         rate_o = f'IF(OR($B{i}="V",$B{i}="AC"),{HV_OH},{PH_OH})'
-        put(ws, f"L{i}", f'=($E{i}*$G{i}+$I{i})*(1+IF($K{i}="N",0,INPUTS!$C$23))', fmt=CUR, border=BOX)
-        put(ws, f"M{i}", f"=$E{i}*$H{i}+$J{i}", fmt=NUM1, border=BOX)
-        put(ws, f"N{i}", f"=$M{i}*{rate_w}", fmt=CUR, border=BOX)
-        put(ws, f"O{i}", f"=$M{i}*{rate_o}", fmt=CUR, border=BOX)
-        put(ws, f"P{i}", f"=$L{i}+$N{i}+$O{i}", fmt=CUR, bold=True, border=BOX)
+        put(ws, f"M{i}", f'=$G{i}*$I{i}*(1+IF($K{i}="N",0,INPUTS!$C$23))', fmt=CUR, border=BOX)
+        put(ws, f"N{i}", f"=$G{i}*$J{i}", fmt=NUM1, border=BOX)
+        put(ws, f"O{i}", f"=$N{i}*{rate_w}", fmt=CUR, border=BOX)
+        put(ws, f"P{i}", f"=$N{i}*{rate_o}", fmt=CUR, border=BOX)
+        put(ws, f"Q{i}", f"=$M{i}+$O{i}+$P{i}", fmt=CUR, bold=True, border=BOX)
+        put(ws, f"V{i}", f"=$M{i}+$R{i}", fmt=CUR, border=BOX)
+        put(ws, f"W{i}", f"=$N{i}*(1+$S{i})+$T{i}", fmt=NUM1, border=BOX)
+        put(ws, f"X{i}", f"=$W{i}*{rate_w}", fmt=CUR, border=BOX)
+        put(ws, f"Y{i}", f"=$W{i}*{rate_o}", fmt=CUR, border=BOX)
+        put(ws, f"Z{i}", f"=$V{i}+$X{i}+$Y{i}", fmt=CUR, bold=True, border=BOX)
         crit_l = f"{rv('AB')},$B{i},{rv('AC')},$C{i},{rv('AD')},1"
-        put(ws, f"Q{i}", f'=IF(OR($B{i}="",$C{i}=""),"",IFERROR(SUMIFS({rv("AF")},{crit_l})/SUMIFS({rv("AE")},{crit_l}),""))',
+        put(ws, f"AA{i}", f'=IF(OR($B{i}="",$C{i}=""),"",IFERROR(SUMIFS({rv("AF")},{crit_l})/SUMIFS({rv("AE")},{crit_l}),""))',
             fmt=FAC, border=BOX)
-        mat_ph = f"IF(OR($C{i}={ph_ref(2)},$C{i}={ph_ref(3)}),{ph_ref(MAT_SUPPLY)},$C{i})"
+        mat_ph = f'IF($L{i}="Y",{ph_ref(FIX_EQ)},IF(OR($C{i}={ph_ref(2)},$C{i}={ph_ref(3)}),{ph_ref(MAT_SUPPLY)},$C{i}))'
         crit_m = f"{rv('AB')},$B{i},{rv('AC')},{mat_ph},{rv('AD')},1"
-        put(ws, f"R{i}", f'=IF(OR($B{i}="",$C{i}=""),"",IFERROR(SUMIFS({rv("AH")},{crit_m})/SUMIFS({rv("AG")},{crit_m}),""))',
+        put(ws, f"AB{i}", f'=IF(OR($B{i}="",$C{i}=""),"",IFERROR(SUMIFS({rv("AH")},{crit_m})/SUMIFS({rv("AG")},{crit_m}),""))',
             fmt=FAC, border=BOX)
-        put(ws, f"S{i}", f'=IF(MAX(N($Q{i}),N($R{i}))>1.1,"Past job ran over budget","")', border=BOX)
-        if item and item[7]:
-            for col in "EGH":
-                ws[f"{col}{i}"].fill = FILL_KEY
-            note(ws, f"E{i}", "EXAMPLE quantity: 123 units from PRJ INFO, $800 ea and 12 hrs ea from the original "
-                              "'Insuite Piping - $800 ea @ 12 HRS ea' label. Replace with your takeoff.")
-    for col in "QR":
+        put(ws, f"AC{i}", f'=IF(MAX(N($AA{i}),N($AB{i}))>1.1,"Past job ran over budget","")', border=BOX)
+        put(ws, f"AD{i}", f'=IF($A{i}="","",IFERROR(INDEX({tk("F")},MATCH($A{i},{tk("B")},0)),"Ref not in takeoff"))', border=BOX)
+    for col in ("AA", "AB"):
         ws.conditional_formatting.add(f"{col}{EST_FIRST}:{col}{EST_LAST}",
                                       FormulaRule(formula=[f'AND(ISNUMBER({col}{EST_FIRST}),{col}{EST_FIRST}>1.1)'],
                                                   fill=PatternFill("solid", fgColor="FFC7CE")))
-    for formula1, col in ((DIV_RANGE, "B"), (PH_RANGE, "C"), ('"Y,N"', "K")):
+    ws.conditional_formatting.add(f"AD{EST_FIRST}:AD{EST_LAST}", FormulaRule(
+        formula=[f'AND(AD{EST_FIRST}<>"",AD{EST_FIRST}<>"Priced")'], fill=PatternFill("solid", fgColor="FFEB9C")))
+    for formula1, col in ((DIV_RANGE, "B"), (PH_RANGE, "C"), ('"Y,N"', "K"), ('"Y,N"', "L")):
         dv = DataValidation(type="list", formula1=formula1, allow_blank=True)
         ws.add_data_validation(dv)
         dv.add(f"{col}{EST_FIRST}:{col}{EST_LAST}")
-    note(ws, "I6", "Lump material adjustment ($). Negative numbers allowed.")
-    note(ws, "J6", "Lump hours adjustment. Negative numbers allowed.")
-    note(ws, "C6", "Phase the work happens in. Material on 03 Rough-in / 04 Finishing rows rolls into "
-                   "05 Material Supply on BUDGET and SOV, the same way Knowify jobs are set up.")
-    note(ws, "Q6", "Labour actual / labour budget for this Div + Phase on the Knowify job pasted, using closed phases "
-                   "that used at least half their budget, and phases already at or over budget. A warning light, not a correction factor.")
+    note(ws, "A6", "Section letter + tag from the takeoff (e.g. A:WC = in-suite water closets). Leave blank for manual lines.")
+    note(ws, "F6", "Type a number to override the takeoff quantity. Leave blank to use the takeoff.")
+    note(ws, "L6", "Y = this row's material is equipment or fixtures. It goes to 06 Fixtures & Equipment Supply on BUDGET/SOV "
+                   "instead of 05 Material Supply.")
+    note(ws, "R6", "Material dollars added (or negative to remove). No PST added on adjustments.")
+    note(ws, "S6", "Productivity factor on hours, e.g. 15% = 15% more hours. Use the Knowify history columns as a guide.")
+    note(ws, "T6", "Lump hours added (or negative).")
+    note(ws, "AA6", "How the same Div + Phase ran vs budget on the last Knowify job pasted. A warning light, not a correction.")
     ws.freeze_panes = "E7"
-    ws.auto_filter.ref = f"A6:S{EST_LAST}"
+    ws.auto_filter.ref = f"A6:AD{EST_LAST}"
 
 
-build_est("PLUMBING EST", PL_ITEMS, "Plumbing (P) and Hydronic (H). Seed unit costs and hours from the original EQUIPMENT sheet.")
+build_est("PLUMBING EST", PL_ITEMS, "Plumbing (P) and Hydronic (H). Lines generated from the takeoff; add manual lines below.")
 build_est("HVAC EST", HV_ITEMS, "Ventilation (V) and Air Conditioning (AC). Identical columns and formulas to PLUMBING EST.")
+
+# =====================================================================
+# TAKEOFF (paste) + TAKEOFF CHECK
+# =====================================================================
+to = wb.create_sheet("TAKEOFF")
+setw(to, {"A": 24, "B": 18, "C": 50, "D": 24, "E": 10, "F": 10, "G": 9, "H": 7, "I": 18, "J": 40})
+for r_, row in enumerate(TAKEOFF_RAW, 1):
+    for c_, v in enumerate(row, 1):
+        if v is not None:
+            to.cell(row=r_, column=c_, value=v).font = Font(name=FONT, size=10)
+tc = wb.create_sheet(TK)
+setw(tc, {"A": 8, "B": 22, "C": 54, "D": 10, "E": 7, "F": 22, "G": 16, "H": 3, "I": 70})
+header_row(tc, 1, ["Section", "Takeoff Ref", "Description", "Qty", "Unit", "Status", "Estimate Cost $"])
+T_ = "TAKEOFF"
+for r_ in range(TK_FIRST, TK_LAST + 1):
+    a, b = f"{T_}!A{r_}", f"{T_}!B{r_}"
+    prev = '""' if r_ == TK_FIRST else f"A{r_ - 1}"
+    put(tc, f"A{r_}", f'=IF(AND({a}<>"",{b}="",MID({a},2,1)="."),LEFT({a},1),{prev})')
+    put(tc, f"B{r_}", f'=IF(OR({b}="",{b}="Tag",A{r_}=""),"",A{r_}&":"&{b})')
+    put(tc, f"C{r_}", f'=IF(B{r_}="","",{T_}!C{r_})')
+    put(tc, f"D{r_}", f'=IF(B{r_}="","",IF(ISNUMBER({T_}!G{r_}),{T_}!G{r_},0))', fmt=NUM1)
+    put(tc, f"E{r_}", f'=IF(B{r_}="","",{T_}!H{r_})')
+    est_cost = "+".join(f"SUMIFS({est_rng(sh, 'Z')},{est_rng(sh, 'A')},B{r_})" for sh in ("PLUMBING EST", "HVAC EST"))
+    in_est = "+".join(f"COUNTIF({est_rng(sh, 'A')},B{r_})" for sh in ("PLUMBING EST", "HVAC EST"))
+    put(tc, f"G{r_}", f'=IF(B{r_}="","",{est_cost})', fmt=CUR)
+    put(tc, f"F{r_}", f'=IF(B{r_}="","",IF(NOT(ISNUMBER({T_}!G{r_})),"TBC in takeoff",IF(({in_est})=0,"MISSING FROM ESTIMATE",'
+                      f'IF(D{r_}=0,"Zero qty",IF(G{r_}=0,"NO UNIT COST","Priced")))))')
+for txt, fill in (("MISSING FROM ESTIMATE", "FFC7CE"), ("NO UNIT COST", "FFEB9C"), ("TBC in takeoff", "FFEB9C"), ("Priced", "C6EFCE")):
+    tc.conditional_formatting.add(f"F{TK_FIRST}:F{TK_LAST}", CellIsRule(operator="equal", formula=[f'"{txt}"'],
+                                  fill=PatternFill("solid", fgColor=fill)))
+put(tc, "I1", "HOW IT WORKS", F_BOLD)
+for k, txt in enumerate([
+    "TAKEOFF holds the provider's 'Takeoff Summary' sheet, pasted at cell A1 (columns A to J only).",
+    "Each line gets a Takeoff Ref = section letter + tag (e.g. A:WC). Lines with the same ref add together.",
+    "Estimate rows pick up the quantity by ref. This list shows whether every takeoff line is in the estimate and priced.",
+    "MISSING FROM ESTIMATE: add a row with this ref on PLUMBING EST or HVAC EST.",
+    "NO UNIT COST: the row exists but material $/unit and hrs/unit are blank.",
+    "TBC in takeoff: the provider has not counted it yet (see their Assumptions & RFIs).",
+], 2):
+    put(tc, f"I{k}", txt, F_NOTE)
+put(tc, "I9", "Lines missing from estimate", F_BOLD)
+put(tc, "I10", f'=COUNTIF(F{TK_FIRST}:F{TK_LAST},"MISSING FROM ESTIMATE")', bold=True)
+put(tc, "I11", "Lines with no unit cost", F_BOLD)
+put(tc, "I12", f'=COUNTIF(F{TK_FIRST}:F{TK_LAST},"NO UNIT COST")', bold=True)
+put(tc, "I13", "Lines TBC in takeoff", F_BOLD)
+put(tc, "I14", f'=COUNTIF(F{TK_FIRST}:F{TK_LAST},"TBC in takeoff")', bold=True)
+grey_zero(tc, f"A{TK_FIRST}:G{TK_LAST}", f'LEN($B{TK_FIRST})')
+tc.freeze_panes = "A2"
 
 # =====================================================================
 # SUBS & GC
@@ -626,7 +744,7 @@ put(sg, "H3", "Direct cost by division", F_NOTE, align=Alignment(horizontal="rig
 put(sg, "H4", "Auto split share", F_NOTE, align=Alignment(horizontal="right"))
 for i, (code, nm) in enumerate(DIVS):
     col = get_column_letter(9 + i)
-    put(sg, f"{col}3", "=" + est_sumifs("P", f'"{code}"'), F_LINK, fmt=CUR)
+    put(sg, f"{col}3", "=" + est_sumifs("Z", f'"{code}"'), F_LINK, fmt=CUR)
     put(sg, f"{col}4", f"=IFERROR({col}3/SUM($I$3:$L$3),0)", fmt=PCT)
 SG_HEAD = ["#", "Item", "Company / Basis", "Phase", "Qty", "Unit", "Rate $", "Amount $",
            "% P", "% H", "% V", "% AC", "Plumbing $", "Hydronic $", "Ventilation $", "A/C $", "Check"]
@@ -714,7 +832,7 @@ GC = [
 ]
 for code, nm in DIVS:
     GC.append((f"Warranty Reserve - {nm}", 1, "LS",
-               f'=ROUNDUP(INPUTS!$C$27*({est_sumifs("L", chr(34) + code + chr(34), ph_ref(FIX_EQ))}),-2)', 7, {code: 1}))
+               f'=ROUNDUP(INPUTS!$C$27*({mat_equip(chr(34) + code + chr(34))}),-2)', 7, {code: 1}))
 for k in range(GC_FIRST, GC_LAST + 1):
     idx = k - GC_FIRST
     g = GC[idx] if idx < len(GC) else None
@@ -752,7 +870,7 @@ dv_t.add(f"R{GC_FIRST}:R{GC_LAST}")
 sg.column_dimensions["R"].width = 17
 note(sg, f"R{GC_FIRST - 1}", "Which company cost category this line belongs to. Used for the back-check on BID SUMMARY.")
 put(sg, f"C{GC_FIRST + 4}", "Dedicated office PM, per month", F_NOTE)
-note(sg, f"G{GC_FIRST + 4}", "$7,500/month from original PRJ INFO D53. Confirmed: the $22/hr overhead covers salaried "
+note(sg, f"G{GC_FIRST + 4}", "$7,500/month from original PRJ INFO D53. Confirmed: the overhead $/hr covers salaried "
                              "staff company wide; this is the PM assigned to this job, so it is not a double count. "
                              "Auto-splits by direct cost across divisions.")
 note(sg, f"B{GC_FIRST}", "Confirmed: field supervision here is separate from the Foreman & PM share of the crew mix.")
@@ -783,10 +901,10 @@ for i, (code, nm) in enumerate(DIVS):
     r_ = 6 + i
     put(bs, f"A{r_}", f"=INPUTS!C{33 + i}", F_LINK, border=BOX, align=Alignment(horizontal="center"))
     put(bs, f"B{r_}", f"=INPUTS!B{33 + i}", F_LINK, border=BOX)
-    put(bs, f"C{r_}", "=" + est_sumifs("M", f"$A{r_}"), fmt=NUM, border=BOX)
-    put(bs, f"D{r_}", "=" + est_sumifs("N", f"$A{r_}"), fmt=CUR, border=BOX)
-    put(bs, f"E{r_}", "=" + est_sumifs("O", f"$A{r_}"), fmt=CUR, border=BOX)
-    put(bs, f"F{r_}", "=" + est_sumifs("L", f"$A{r_}"), fmt=CUR, border=BOX)
+    put(bs, f"C{r_}", "=" + est_sumifs("W", f"$A{r_}"), fmt=NUM, border=BOX)
+    put(bs, f"D{r_}", "=" + est_sumifs("X", f"$A{r_}"), fmt=CUR, border=BOX)
+    put(bs, f"E{r_}", "=" + est_sumifs("Y", f"$A{r_}"), fmt=CUR, border=BOX)
+    put(bs, f"F{r_}", "=" + est_sumifs("V", f"$A{r_}"), fmt=CUR, border=BOX)
     put(bs, f"G{r_}", f"=F{r_}*INPUTS!$C$25", fmt=CUR, border=BOX)
     put(bs, f"H{r_}", f"='SUBS & GC'!{SUB_COLS[i]}{SUB_LAST + 1}", F_LINK, fmt=CUR, border=BOX)
     put(bs, f"I{r_}", f"='SUBS & GC'!{SUB_COLS[i]}{GC_LAST + 1}", F_LINK, fmt=CUR, border=BOX)
@@ -816,7 +934,7 @@ put(bs, "M12", "Contract + GST", F_NOTE)
 put(bs, "N12", "=N10+N11", fmt=CUR, bold=True)
 put(bs, "B11", "Sell price = (cost excluding subs) / (1 - self-perform margin) + subs / (1 - subs margin). Contingency sits inside cost, before the grand total.", F_NOTE)
 
-FIX_BID = "+".join(f"SUMIFS({est_rng(sh, 'L')},{est_rng(sh, 'C')},{ph_ref(FIX_EQ)})" for sh in ("PLUMBING EST", "HVAC EST"))
+FIX_BID = mat_equip(None)
 
 
 def gc_type(t):
@@ -869,7 +987,7 @@ put(bs, "B26", "CHECKS (all must read OK before the bid goes out)", F_SUB)
 def valid_rows(sheet):
     def rng(c):
         return f"'{sheet}'!${c}${EST_FIRST}:${c}${EST_LAST}"
-    return f"SUMPRODUCT(({rng('P')}<>0)*(ISNA(MATCH({rng('B')},{DIV_RANGE},0))+ISNA(MATCH({rng('C')},{PH_RANGE},0))))"
+    return f"SUMPRODUCT(({rng('Z')}<>0)*(ISNA(MATCH({rng('B')},{DIV_RANGE},0))+ISNA(MATCH({rng('C')},{PH_RANGE},0))))"
 
 
 checks = [
@@ -886,6 +1004,8 @@ checks = [
     ("Level weights total 100%", f"=INPUTS!F{LV_TOT}"),
     ("BUDGET total cost = BID SUMMARY total cost (every sub/GC row has a phase)", "=IF(ABS(BUDGET!J11-K10)<1,\"OK\",\"CHECK\")"),
     ("SCHEDULE OF VALUES total = contract", "=IF(ABS('SCHEDULE OF VALUES'!C5-N10)<1,\"OK\",\"CHECK\")"),
+    ("Every takeoff line is in the estimate (TAKEOFF CHECK)", f"=IF('{TK}'!I10=0,\"OK\",\"CHECK\")"),
+    ("Every takeoff line with a quantity has a unit cost (TAKEOFF CHECK)", f"=IF('{TK}'!I12=0,\"OK\",\"CHECK\")"),
 ]
 for i, (lab, f) in enumerate(checks):
     r_ = 27 + i
@@ -923,7 +1043,7 @@ put(bu, "B10", "TOTAL", F_BOLD)
 for col in "CDEFGHIJKL":
     put(bu, f"{col}10", f"=SUM({col}6:{col}9)", fmt=NUM if col == "C" else CUR, bold=True, border=TOPLINE)
 put(bu, "B11", "Total cost rebuilt from phase detail below (must equal J10)", F_NOTE)
-put(bu, "B12", "Material on 03 Rough-in and 04 Finishing rows is shown under 05 Material Supply (Knowify setup).", F_NOTE)
+put(bu, "B12", "Material on 03/04 rows shows under 05 Material Supply, or 06 Fixtures & Equipment Supply when the row is flagged Equip = Y.", F_NOTE)
 
 BLOCK = 19
 B_START = 14
@@ -945,15 +1065,17 @@ for d, (code, nm) in enumerate(DIVS):
         BROW[(d, p)] = r_
         ph = ph_ref(p)
         put(bu, f"B{r_}", f"={ph}", F_LINK, border=BOX)
-        put(bu, f"C{r_}", "=" + est_sumifs("M", div, ph), fmt=NUM, border=BOX)
-        put(bu, f"D{r_}", "=" + est_sumifs("N", div, ph), fmt=CUR, border=BOX)
-        put(bu, f"E{r_}", "=" + est_sumifs("O", div, ph), fmt=CUR, border=BOX)
+        put(bu, f"C{r_}", "=" + est_sumifs("W", div, ph), fmt=NUM, border=BOX)
+        put(bu, f"D{r_}", "=" + est_sumifs("X", div, ph), fmt=CUR, border=BOX)
+        put(bu, f"E{r_}", "=" + est_sumifs("Y", div, ph), fmt=CUR, border=BOX)
         if p in LEVEL_PHASES:
             mat = "=0"
         elif p == MAT_SUPPLY:
-            mat = "=" + "+".join(est_sumifs("L", div, ph_ref(q)) for q in (MAT_SUPPLY,) + LEVEL_PHASES)
+            mat = "=" + mat_supply(div)
+        elif p == FIX_EQ:
+            mat = "=" + mat_equip(div)
         else:
-            mat = "=" + est_sumifs("L", div, ph)
+            mat = "=" + est_sumifs("V", div, ph)
         put(bu, f"F{r_}", mat, fmt=CUR, border=BOX)
         dcol = SUB_COLS[d]
         put(bu, f"G{r_}", f"=SUMIFS('SUBS & GC'!${dcol}${SUB_FIRST}:${dcol}${SUB_LAST},'SUBS & GC'!$D${SUB_FIRST}:$D${SUB_LAST},{ph})",
@@ -1435,7 +1557,7 @@ FIND = [
      "Supervision qty links to INPUTS HVAC duration."),
     ("MED", "PRJ SUMMARY row 59 (Supervision - Office)",
      "$7,500/month x 24 months = $180,000 (+15% = $207,000) is allocated 100% to Plumbing, using the HVAC duration.",
-     "Plumbing looks $207,000 more expensive than it is; HVAC looks cheaper. Confirmed this is a real job cost (dedicated PM), separate from the $22/hr overhead.",
+     "Plumbing looks $207,000 more expensive than it is; HVAC looks cheaper. Confirmed this is a real job cost (dedicated PM), separate from the per-hour overhead.",
      "Kept as 'Office Project Manager'. Auto-splits by direct cost across divisions (or set your own %)."),
     ("HIGH", "PRJ SUMMARY M55:T79 (\"50-50 Div's\" split)",
      "GC split formulas divide by C4+C5 with no IFERROR. With no HVAC entered they return a divide-by-zero (DIV/0) error.",
@@ -1499,11 +1621,14 @@ def text_list(top, heading, items, marker=None):
 
 
 nxt = text_list(5 + len(FIND) + 2, "OPEN QUESTIONS FOR YOU", [
-    "Subs margin default is 12% (range 10% to 15%). Confirm the standard you want.",
-    "Revit takeoff: send a sample xlsx when available so the import can map its rows to Item Codes.",
+    "Office PM: the $32.71/hr comes from Admin Labour + General Overhead in your books. If the dedicated office PM's salary sits in "
+    "Admin Labour, the $7,500/month GC line partly double counts with the overhead rate. Is the PM booked to job cost or to admin?",
+    "438 West Pender: unit costs and hours per unit are blank. Paste or type your prices; TAKEOFF CHECK shows what is still unpriced.",
 ])
 text_list(nxt, "ANSWERED (decisions built into this workbook)", [
-    "Overhead stays a manual entry per bid at $22/hr. The implied figure from the company breakdown is shown on RATE VARIANCE for reference only.",
+    "Overhead is a manual entry per bid, now $32.71/hr (was $22): the rate implied by the company cost breakdown at Knowify labour rates. RATE VARIANCE tracks it.",
+    "Subs margin standard 12%.",
+    "Takeoff import built for the provider's Takeoff Summary format (438 West Pender sample). Estimate shows true cost first, then adjustment columns.",
     "A dedicated office project manager per job is a separate monthly cost, so the Office Project Manager GC line stays.",
     "Field supervision GC lines are not double counted with the Foreman & PM share of the crew mix.",
     "Template rates include nothing Knowify lacks; both are fully burdened. Bids now default to Knowify actual rates and mix; RATE VARIANCE tracks drift.",
@@ -1515,11 +1640,11 @@ text_list(nxt, "ANSWERED (decisions built into this workbook)", [
 au.freeze_panes = "A5"
 
 # ---------- workbook-wide settings ----------
-order = ["READ ME", "INPUTS", "LABOUR RATES", "PLUMBING EST", "HVAC EST", "SUBS & GC", "CONTINGENCY", "BID SUMMARY",
+order = ["READ ME", "INPUTS", "LABOUR RATES", "TAKEOFF", "TAKEOFF CHECK", "PLUMBING EST", "HVAC EST", "SUBS & GC", "CONTINGENCY", "BID SUMMARY",
          "BUDGET", "SCHEDULE OF VALUES", "RATE VARIANCE", "KNOWIFY REVIEW", "KNOWIFY PHASES", "KNOWIFY TIME", "AUDIT NOTES"]
 wb._sheets = [wb[n] for n in order]
 tab_colors = {"READ ME": "7F7F7F", "INPUTS": "FFC000", "LABOUR RATES": "FFC000", "PLUMBING EST": "2F5597",
-              "HVAC EST": "2F5597", "SUBS & GC": "2F5597", "CONTINGENCY": "2F5597", "RATE VARIANCE": "70AD47", "BID SUMMARY": "C00000", "BUDGET": "548235",
+              "HVAC EST": "2F5597", "TAKEOFF": "A9D08E", "TAKEOFF CHECK": "70AD47", "SUBS & GC": "2F5597", "CONTINGENCY": "2F5597", "RATE VARIANCE": "70AD47", "BID SUMMARY": "C00000", "BUDGET": "548235",
               "SCHEDULE OF VALUES": "548235", "KNOWIFY REVIEW": "70AD47", "KNOWIFY PHASES": "A9D08E",
               "KNOWIFY TIME": "A9D08E", "AUDIT NOTES": "7F7F7F"}
 for ws in wb.worksheets:
