@@ -350,7 +350,8 @@ CREW_HDR = PERF_LAST + 3
 CREW_FIRST = CREW_HDR + 2
 CREW_SUB = CREW_FIRST + 7       # 5 classes, Excluded, Unmapped, then crew subtotal
 CREW_ALL = CREW_FIRST + 8       # all roles
-CLASS_EXCL = "Office / Safety (in GC)"
+CLASS_EXCL = "Office PM / Admin / Safety"
+KN_PM_RATE = None  # set after CREW_ALL is known
 
 
 def est_rng(sheet, col):
@@ -398,6 +399,7 @@ CREW_RATE = f"{REV}!$E${CREW_FIRST}:$E${CREW_FIRST + 4}"
 CREW_MIX = f"{REV}!$F${CREW_FIRST}:$F${CREW_FIRST + 4}"
 KN_BLENDED = f"{REV}!$E${CREW_SUB}"
 KN_BLENDED_ALL = f"{REV}!$E${CREW_ALL}"
+KN_PM_RATE = f"{REV}!$E${CREW_ALL + 2}"
 OH_RATIO = f"INPUTS!$C${CG_LAST + 2}"
 
 # =====================================================================
@@ -458,8 +460,8 @@ def crew_block(top, label, hours_formula):
     for k, txt in enumerate([
         "Template rates and mix: original PRJ INFO D36:E40 (fully burdened).",
         "Knowify actuals: KNOWIFY TIME, all trades, burden included (confirmed).",
-        "Office PM, admin and safety coordinator hours are left out of the Knowify mix",
-        "because they are priced on SUBS & GC.",
+        "Office PM, admin and safety coordinator hours are left out of the Knowify mix;",
+        "the office PM is priced in its own block below.",
         "Default source is Knowify actual (estimator decision, Oct 2026). Without Knowify data the template is used.",
     ]):
         put(lr, f"M{first + k}", txt, F_NOTE)
@@ -471,7 +473,48 @@ hv_t = crew_block(19, "HVAC CREW (ventilation & A/C)", "=" + est_sumifs("W", '"V
 PH_WAGE, PH_OH = f"'LABOUR RATES'!$I${ph_t}", f"'LABOUR RATES'!$C${ph_t + 1}"
 HV_WAGE, HV_OH = f"'LABOUR RATES'!$I${hv_t}", f"'LABOUR RATES'!$C${hv_t + 1}"
 
-cmp_r = hv_t + 7
+pm = hv_t + 7
+put(lr, f"B{pm}", "OFFICE PROJECT MANAGER (hours added to the job, priced like crew hours)", F_SUB)
+for k, (lab, val, fmt, inp_) in enumerate([
+    ("Project duration (months)", "=MAX(INPUTS!$C$21,INPUTS!$C$22)", NUM, False),
+    ("PM working days per month on this job", 11, NUM1, True),
+    ("Hours per day", 8, NUM1, True),
+    ("Number of office PMs", 1, NUM1, True),
+]):
+    r_ = pm + 1 + k
+    put(lr, f"B{r_}", lab, border=BOX)
+    if inp_:
+        put(lr, f"C{r_}", val, F_IN, fmt=fmt, fill=FILL_KEY, border=BOX)
+    else:
+        put(lr, f"C{r_}", val, F_LINK, fmt=fmt, border=BOX)
+put(lr, f"B{pm + 5}", "PM hours on this job", F_BOLD, border=BOX)
+put(lr, f"C{pm + 5}", f"=C{pm + 1}*C{pm + 2}*C{pm + 3}*C{pm + 4}", fmt=NUM, bold=True, fill=FILL_TOT, border=BOX)
+put(lr, f"B{pm + 6}", "PM rate $/hr (burdened)", border=BOX)
+put(lr, f"C{pm + 6}", f'=IF(AND($G$4="Knowify actual",N(E{pm + 6})>0),E{pm + 6},F{pm + 6})', fmt=CUR2, border=BOX)
+put(lr, f"D{pm + 6}", "Knowify PM:", F_NOTE, align=Alignment(horizontal="right"))
+put(lr, f"E{pm + 6}", f"=IFERROR({KN_PM_RATE},0)", F_LINK, fmt=CUR2, border=BOX)
+put(lr, f"F{pm + 6}", 96, F_IN, fmt=CUR2, fill=FILL_IN, border=BOX)
+put(lr, f"G{pm + 6}", "Template fallback (Foreman & PM)", F_NOTE)
+put(lr, f"B{pm + 7}", "Overhead $/hr", border=BOX)
+put(lr, f"C{pm + 7}", f"=C{ph_t + 1}", fmt=CUR2, border=BOX)
+put(lr, f"B{pm + 8}", "PM labour $", border=BOX)
+put(lr, f"C{pm + 8}", f"=C{pm + 5}*C{pm + 6}", fmt=CUR, border=BOX)
+put(lr, f"B{pm + 9}", "PM overhead $", border=BOX)
+put(lr, f"C{pm + 9}", f"=C{pm + 5}*C{pm + 7}", fmt=CUR, border=BOX)
+put(lr, f"B{pm + 10}", "PM TOTAL $", F_BOLD, border=BOX)
+put(lr, f"C{pm + 10}", f"=C{pm + 8}+C{pm + 9}", fmt=CUR, bold=True, fill=FILL_TOT, border=BOX)
+for k, txt in enumerate([
+    "Replaces the old $7,500/month line. Office PM is booked to job cost (estimator, Oct 2026).",
+    "11 days = half of ~22 working days a month, for a PM running two jobs.",
+    "Rate follows the P&H Rate source: Knowify 'Project Manager' role average, else template $96.",
+    "Hours, labour and overhead are split across divisions by direct cost (SUBS & GC row 4)",
+    "and land in 09 Office, Supervision & General on BUDGET and SOV.",
+    "Reference: on 405 Marie Place the PM charged about 1,020 hrs in ~17 months (~60 hrs/month).",
+]):
+    put(lr, f"M{pm + 1 + k}", txt, F_NOTE)
+PM_HRS, PM_LAB, PM_OH = f"'LABOUR RATES'!$C${pm + 5}", f"'LABOUR RATES'!$C${pm + 8}", f"'LABOUR RATES'!$C${pm + 9}"
+PM_SHARE = {0: "'SUBS & GC'!$I$4", 1: "'SUBS & GC'!$J$4", 2: "'SUBS & GC'!$K$4", 3: "'SUBS & GC'!$L$4"}
+cmp_r = pm + 13
 put(lr, f"B{cmp_r}", "RATE COMPARISON (per hour)", F_SUB)
 header_row(lr, cmp_r + 1, ["Rate Basis", "$/hr", "", "", "P&H Est. Hours", "Labour (+OH) Cost"], start_col=2)
 for i, (lab, f) in enumerate([
@@ -815,7 +858,6 @@ GC = [
     ("Supervision - Hydronic", "=INPUTS!$C$21", "months", None, 8, {"H": 1}),
     ("Supervision - Ventilation", "=INPUTS!$C$22", "months", None, 8, {"V": 1}),
     ("Supervision - A/C", "=INPUTS!$C$22", "months", None, 8, {"AC": 1}),
-    ("Office Project Manager (dedicated to this job)", MAXDUR, "months", 7500, 8, {}),
     ("Health & Safety", MAXDUR, "months", None, 8, {}),
     ("Bonus - Plumbing", 1, "LS", None, 8, {"P": 1}),
     ("Bonus - Hydronic", 1, "LS", None, 8, {"H": 1}),
@@ -855,7 +897,7 @@ for k in range(SUB_FIRST, SUB_LAST + 1):
     put(sg, f"R{k}", "Subs & Safety", border=BOX)
 for k in range(GC_FIRST, GC_LAST + 1):
     nm_ = sg[f"B{k}"].value or ""
-    if nm_.startswith(("Supervision", "Office Project Manager", "Bonus")):
+    if nm_.startswith(("Supervision", "Bonus")):
         typ = "Labour"
     elif nm_.startswith("Health & Safety"):
         typ = "Subs & Safety"
@@ -869,12 +911,8 @@ sg.add_data_validation(dv_t)
 dv_t.add(f"R{GC_FIRST}:R{GC_LAST}")
 sg.column_dimensions["R"].width = 17
 note(sg, f"R{GC_FIRST - 1}", "Which company cost category this line belongs to. Used for the back-check on BID SUMMARY.")
-put(sg, f"C{GC_FIRST + 4}", "Dedicated office PM, per month", F_NOTE)
-note(sg, f"G{GC_FIRST + 4}", "$7,500/month from original PRJ INFO D53. Confirmed: the overhead $/hr covers salaried "
-                             "staff company wide; this is the PM assigned to this job, so it is not a double count. "
-                             "Auto-splits by direct cost across divisions.")
 note(sg, f"B{GC_FIRST}", "Confirmed: field supervision here is separate from the Foreman & PM share of the crew mix.")
-note(sg, f"B{GC_FIRST + 5}", "Knowify charges the Health & Safety Coordinator's time to the job (237 hrs on 405 Marie Place).")
+note(sg, f"B{GC_FIRST + 4}", "Office PM is priced as hours on LABOUR RATES, not here. Knowify charges the Health & Safety Coordinator's time to the job (237 hrs on 405 Marie Place).")
 put(sg, f"B{GC_LAST + 1}", "GENERAL CONDITIONS TOTAL", F_BOLD)
 for col in "HMNOP":
     put(sg, f"{col}{GC_LAST + 1}", f"=SUM({col}{GC_FIRST}:{col}{GC_LAST})", fmt=CUR, bold=True, fill=FILL_TOT, border=TOPLINE)
@@ -901,9 +939,9 @@ for i, (code, nm) in enumerate(DIVS):
     r_ = 6 + i
     put(bs, f"A{r_}", f"=INPUTS!C{33 + i}", F_LINK, border=BOX, align=Alignment(horizontal="center"))
     put(bs, f"B{r_}", f"=INPUTS!B{33 + i}", F_LINK, border=BOX)
-    put(bs, f"C{r_}", "=" + est_sumifs("W", f"$A{r_}"), fmt=NUM, border=BOX)
-    put(bs, f"D{r_}", "=" + est_sumifs("X", f"$A{r_}"), fmt=CUR, border=BOX)
-    put(bs, f"E{r_}", "=" + est_sumifs("Y", f"$A{r_}"), fmt=CUR, border=BOX)
+    put(bs, f"C{r_}", "=" + est_sumifs("W", f"$A{r_}") + f"+{PM_HRS}*{PM_SHARE[i]}", fmt=NUM, border=BOX)
+    put(bs, f"D{r_}", "=" + est_sumifs("X", f"$A{r_}") + f"+{PM_LAB}*{PM_SHARE[i]}", fmt=CUR, border=BOX)
+    put(bs, f"E{r_}", "=" + est_sumifs("Y", f"$A{r_}") + f"+{PM_OH}*{PM_SHARE[i]}", fmt=CUR, border=BOX)
     put(bs, f"F{r_}", "=" + est_sumifs("V", f"$A{r_}"), fmt=CUR, border=BOX)
     put(bs, f"G{r_}", f"=F{r_}*INPUTS!$C$25", fmt=CUR, border=BOX)
     put(bs, f"H{r_}", f"='SUBS & GC'!{SUB_COLS[i]}{SUB_LAST + 1}", F_LINK, fmt=CUR, border=BOX)
@@ -993,8 +1031,9 @@ def valid_rows(sheet):
 checks = [
     ("P&H crew mix = 100% and labour ties to wage breakdown", f"='LABOUR RATES'!C{ph_t + 3}"),
     ("HVAC crew mix = 100% and labour ties to wage breakdown", f"='LABOUR RATES'!C{hv_t + 3}"),
-    ("P+H labour $ = LABOUR RATES P&H cost by wage breakdown", f"=IF(ABS(D6+D7-'LABOUR RATES'!K{ph_t})<1,\"OK\",\"CHECK\")"),
-    ("V+AC labour $ = LABOUR RATES HVAC cost by wage breakdown", f"=IF(ABS(D8+D9-'LABOUR RATES'!K{hv_t})<1,\"OK\",\"CHECK\")"),
+    ("P+H crew labour $ = LABOUR RATES P&H cost by wage breakdown", "=IF(ABS(" + est_sumifs("X", '"P"') + "+" + est_sumifs("X", '"H"') + f"-'LABOUR RATES'!K{ph_t})<1,\"OK\",\"CHECK\")"),
+    ("V+AC crew labour $ = LABOUR RATES HVAC cost by wage breakdown", "=IF(ABS(" + est_sumifs("X", '"V"') + "+" + est_sumifs("X", '"AC"') + f"-'LABOUR RATES'!K{hv_t})<1,\"OK\",\"CHECK\")"),
+    ("Office PM hours fully allocated to divisions", f"=IF(ABS(SUM('SUBS & GC'!$I$4:$L$4)*{PM_HRS}-{PM_HRS})<0.1,\"OK\",\"CHECK\")"),
     ("Every estimate row has a valid Div and Phase",
      f"=IF({valid_rows('PLUMBING EST')}+{valid_rows('HVAC EST')}=0,\"OK\",\"CHECK\")"),
     ("Subtrades fully allocated to divisions",
@@ -1065,9 +1104,10 @@ for d, (code, nm) in enumerate(DIVS):
         BROW[(d, p)] = r_
         ph = ph_ref(p)
         put(bu, f"B{r_}", f"={ph}", F_LINK, border=BOX)
-        put(bu, f"C{r_}", "=" + est_sumifs("W", div, ph), fmt=NUM, border=BOX)
-        put(bu, f"D{r_}", "=" + est_sumifs("X", div, ph), fmt=CUR, border=BOX)
-        put(bu, f"E{r_}", "=" + est_sumifs("Y", div, ph), fmt=CUR, border=BOX)
+        pm_add = (lambda x: f"+{x}*{PM_SHARE[d]}") if p == 8 else (lambda x: "")
+        put(bu, f"C{r_}", "=" + est_sumifs("W", div, ph) + pm_add(PM_HRS), fmt=NUM, border=BOX)
+        put(bu, f"D{r_}", "=" + est_sumifs("X", div, ph) + pm_add(PM_LAB), fmt=CUR, border=BOX)
+        put(bu, f"E{r_}", "=" + est_sumifs("Y", div, ph) + pm_add(PM_OH), fmt=CUR, border=BOX)
         if p in LEVEL_PHASES:
             mat = "=0"
         elif p == MAT_SUPPLY:
@@ -1397,7 +1437,13 @@ for rr, rng in ((CREW_SUB, f"{CREW_FIRST}:{CREW_FIRST + 4}"), (CREW_ALL, f"{CREW
     put(kr, f"D{rr}", f"=SUM(D{a_}:D{b_})", fmt=CUR, bold=True, border=TOPLINE)
     put(kr, f"E{rr}", f"=IFERROR(D{rr}/C{rr},0)", fmt=CUR2, bold=True, fill=FILL_TOT, border=TOPLINE)
 put(kr, f"F{CREW_SUB}", f"=SUM(F{CREW_FIRST}:F{CREW_FIRST + 4})", fmt=PCT, bold=True, border=TOPLINE)
-put(kr, f"B{CREW_ALL + 1}", "Knowify cost includes burden (confirmed). Office PM, admin and safety time is priced on SUBS & GC, so it is left out of the crew mix.", F_NOTE)
+put(kr, f"B{CREW_ALL + 1}", "Knowify cost includes burden (confirmed). Office PM, admin and safety time is left out of the crew mix (office PM is priced on LABOUR RATES).", F_NOTE)
+put(kr, f"B{CREW_ALL + 2}", "Project Manager role (used for office PM rate)", border=BOX)
+_pmh = f'SUMIFS({REV}!$AU${KT_FIRST}:$AU${KT_LAST},{REV}!$AT${KT_FIRST}:$AT${KT_LAST},"Project Manager")'
+_pmc = f'SUMIFS({REV}!$AV${KT_FIRST}:$AV${KT_LAST},{REV}!$AT${KT_FIRST}:$AT${KT_LAST},"Project Manager")'
+put(kr, f"C{CREW_ALL + 2}", f"={_pmh}", fmt=NUM, border=BOX)
+put(kr, f"D{CREW_ALL + 2}", f"={_pmc}", fmt=CUR, border=BOX)
+put(kr, f"E{CREW_ALL + 2}", f"=IFERROR(D{CREW_ALL + 2}/C{CREW_ALL + 2},0)", fmt=CUR2, bold=True, border=BOX)
 kr.freeze_panes = "A4"
 
 # =====================================================================
@@ -1558,7 +1604,7 @@ FIND = [
     ("MED", "PRJ SUMMARY row 59 (Supervision - Office)",
      "$7,500/month x 24 months = $180,000 (+15% = $207,000) is allocated 100% to Plumbing, using the HVAC duration.",
      "Plumbing looks $207,000 more expensive than it is; HVAC looks cheaper. Confirmed this is a real job cost (dedicated PM), separate from the per-hour overhead.",
-     "Kept as 'Office Project Manager'. Auto-splits by direct cost across divisions (or set your own %)."),
+     "Replaced by office PM hours on LABOUR RATES (months x 11 days x 8 hrs at PM rate + overhead), split across divisions by direct cost."),
     ("HIGH", "PRJ SUMMARY M55:T79 (\"50-50 Div's\" split)",
      "GC split formulas divide by C4+C5 with no IFERROR. With no HVAC entered they return a divide-by-zero (DIV/0) error.",
      "PRJ SUMMARY F6, G6, J6, W6 and J7 all show DIV/0 errors, so the grand total breaks on any plumbing-only job.",
@@ -1621,15 +1667,14 @@ def text_list(top, heading, items, marker=None):
 
 
 nxt = text_list(5 + len(FIND) + 2, "OPEN QUESTIONS FOR YOU", [
-    "Office PM: the $32.71/hr comes from Admin Labour + General Overhead in your books. If the dedicated office PM's salary sits in "
-    "Admin Labour, the $7,500/month GC line partly double counts with the overhead rate. Is the PM booked to job cost or to admin?",
+    "Office PM time: 11 days x 8 hrs a month (88 hrs) is assumed. On 405 Marie Place the PM charged about 60 hrs a month. Keep 11 days?",
     "438 West Pender: unit costs and hours per unit are blank. Paste or type your prices; TAKEOFF CHECK shows what is still unpriced.",
 ])
 text_list(nxt, "ANSWERED (decisions built into this workbook)", [
     "Overhead is a manual entry per bid, now $32.71/hr (was $22): the rate implied by the company cost breakdown at Knowify labour rates. RATE VARIANCE tracks it.",
     "Subs margin standard 12%.",
     "Takeoff import built for the provider's Takeoff Summary format (438 West Pender sample). Estimate shows true cost first, then adjustment columns.",
-    "A dedicated office project manager per job is a separate monthly cost, so the Office Project Manager GC line stays.",
+    "Office PM is booked to job cost. The $7,500/month line is removed; PM hours (months x 11 days x 8 hrs) are priced at the PM rate plus overhead and counted in total hours.",
     "Field supervision GC lines are not double counted with the Foreman & PM share of the crew mix.",
     "Template rates include nothing Knowify lacks; both are fully burdened. Bids now default to Knowify actual rates and mix; RATE VARIANCE tracks drift.",
     "Self-perform margin standard 15%, drop-down 8% to 20%. Subs margin drop-down 10% to 15%.",
